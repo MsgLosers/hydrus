@@ -1,40 +1,45 @@
-import ClientConstants as CC
-import ClientData
-import ClientDefaults
-import ClientDragDrop
-import ClientExporting
-import ClientGUICommon
-import ClientGUIControls
-import ClientGUIDialogs
-import ClientGUIDialogsQuick
-import ClientGUIFrames
-import ClientGUIListBoxes
-import ClientGUIListCtrl
-import ClientGUIScrolledPanels
-import ClientGUIScrolledPanelsEdit
-import ClientGUIPanels
-import ClientGUIPopupMessages
-import ClientGUITags
-import ClientGUITime
-import ClientGUITopLevelWindows
-import ClientNetworking
-import ClientNetworkingContexts
-import ClientNetworkingDomain
-import ClientParsing
-import ClientPaths
-import ClientRendering
-import ClientSerialisable
-import ClientTags
-import ClientThreading
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientDefaults
+from . import ClientDragDrop
+from . import ClientExporting
+from . import ClientFiles
+from . import ClientGUIACDropdown
+from . import ClientGUICommon
+from . import ClientGUIControls
+from . import ClientGUIDialogs
+from . import ClientGUIDialogsQuick
+from . import ClientGUIFrames
+from . import ClientGUIFunctions
+from . import ClientGUIListBoxes
+from . import ClientGUIListCtrl
+from . import ClientGUIScrolledPanels
+from . import ClientGUIScrolledPanelsEdit
+from . import ClientGUIPanels
+from . import ClientGUIPopupMessages
+from . import ClientGUITags
+from . import ClientGUITime
+from . import ClientGUITopLevelWindows
+from . import ClientNetworking
+from . import ClientNetworkingContexts
+from . import ClientNetworkingDomain
+from . import ClientNetworkingLogin
+from . import ClientParsing
+from . import ClientPaths
+from . import ClientRendering
+from . import ClientSearch
+from . import ClientSerialisable
+from . import ClientTags
+from . import ClientThreading
 import collections
-import cookielib
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusNATPunch
-import HydrusPaths
-import HydrusSerialisable
+import http.cookiejar
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusNATPunch
+from . import HydrusPaths
+from . import HydrusSerialisable
 import os
 import stat
 import sys
@@ -45,7 +50,7 @@ import wx
 
 try:
     
-    import ClientGUIMatPlotLib
+    from . import ClientGUIMatPlotLib
     
     MATPLOTLIB_OK = True
     
@@ -101,25 +106,25 @@ class AdvancedContentUpdatePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         if len( services ) > 0:
             
-            self._action_dropdown.Append( 'copy', self.COPY )
+            self._action_dropdown.Append( 'copy current and pending mappings', self.COPY )
             
         
         if self._service_key == CC.LOCAL_TAG_SERVICE_KEY:
             
-            self._action_dropdown.Append( 'delete', self.DELETE )
-            self._action_dropdown.Append( 'clear deleted record', self.DELETE_DELETED )
-            self._action_dropdown.Append( 'delete from deleted files', self.DELETE_FOR_DELETED_FILES )
+            self._action_dropdown.Append( 'delete current mappings', self.DELETE )
+            self._action_dropdown.Append( 'clear deleted mappings record', self.DELETE_DELETED )
+            self._action_dropdown.Append( 'delete current mappings from deleted files', self.DELETE_FOR_DELETED_FILES )
             
         
         self._action_dropdown.Select( 0 )
         
         #
         
-        self._tag_type_dropdown.Append( 'all mappings', self.ALL_MAPPINGS )
-        self._tag_type_dropdown.Append( 'all namespaced mappings', self.NAMESPACED )
-        self._tag_type_dropdown.Append( 'all unnamespaced mappings', self.UNNAMESPACED )
-        self._tag_type_dropdown.Append( 'specific tag\'s mappings', self.SPECIFIC_MAPPINGS )
-        self._tag_type_dropdown.Append( 'specific namespace\'s mappings', self.SPECIFIC_NAMESPACE )
+        self._tag_type_dropdown.Append( 'all', self.ALL_MAPPINGS )
+        self._tag_type_dropdown.Append( 'all namespaced', self.NAMESPACED )
+        self._tag_type_dropdown.Append( 'all unnamespaced', self.UNNAMESPACED )
+        self._tag_type_dropdown.Append( 'specific tag', self.SPECIFIC_MAPPINGS )
+        self._tag_type_dropdown.Append( 'specific namespace', self.SPECIFIC_NAMESPACE )
         
         self._tag_type_dropdown.Select( 0 )
         
@@ -172,7 +177,7 @@ class AdvancedContentUpdatePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         message = 'These advanced operations are powerful, so think before you click. They can lock up your client for a _long_ time, and are not undoable.'
         message += os.linesep * 2
-        message += 'You may need to refresh your existing searches to see their effect.' 
+        message += 'You may need to restart your client to see their effect.' 
         
         st = ClientGUICommon.BetterStaticText( self, message )
         
@@ -298,7 +303,34 @@ class AdvancedContentUpdatePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         service_keys_to_content_updates = { self._service_key : [ content_update ] }
         
-        HG.client_controller.Write( 'content_updates', service_keys_to_content_updates )
+        def do_it( job_key ):
+            
+            try:
+                
+                HG.client_controller.WriteSynchronous( 'content_updates', service_keys_to_content_updates )
+                
+            finally:
+                
+                job_key.Finish()
+                
+            
+        
+        job_key = ClientThreading.JobKey()
+        
+        job_key.SetVariable( 'popup_title', 'Processing advanced content update' )
+        
+        HG.client_controller.CallToThread( do_it, job_key )
+        
+        with ClientGUITopLevelWindows.DialogNullipotent( self, 'Working\u2026' ) as dlg:
+            
+            panel = ClientGUIPopupMessages.PopupMessageDialogPanel( dlg, job_key )
+            
+            dlg.SetPanel( panel )
+            
+            dlg.ShowModal()
+            
+        
+        job_key.Delete()
         
     
     def ImportFromHTA( self ):
@@ -309,7 +341,7 @@ class AdvancedContentUpdatePanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             if dlg_file.ShowModal() == wx.ID_OK:
                 
-                path = HydrusData.ToUnicode( dlg_file.GetPath() )
+                path = dlg_file.GetPath()
                 
                 ClientGUITags.ImportFromHTA( self, path, self._service_key, self._hashes )
                 
@@ -318,9 +350,6 @@ class AdvancedContentUpdatePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
 class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
-    RESIZED_RATIO = 0.012
-    FULLSIZE_RATIO = 0.016
-    
     def __init__( self, parent, controller ):
         
         self._controller = controller
@@ -328,6 +357,10 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         self._new_options = self._controller.new_options
         
         ClientGUIScrolledPanels.ReviewPanel.__init__( self, parent )
+        
+        self._prefixes_to_locations = HG.client_controller.Read( 'client_files_locations' )
+        
+        ( self._locations_to_ideal_weights, self._ideal_thumbnails_location_override ) = self._controller.Read( 'ideal_client_files_locations' )
         
         service_info = HG.client_controller.Read( 'service_info', CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
         
@@ -365,17 +398,12 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         current_media_locations_listctrl_panel.AddButton( 'increase file weight', self._IncreaseWeight, enabled_check_func = self._CanIncreaseWeight )
         current_media_locations_listctrl_panel.AddButton( 'decrease file weight', self._DecreaseWeight, enabled_check_func = self._CanDecreaseWeight )
         
-        self._resized_thumbs_location = wx.TextCtrl( info_panel )
-        self._resized_thumbs_location.Disable()
+        self._thumbnails_location = wx.TextCtrl( info_panel )
+        self._thumbnails_location.Disable()
         
-        self._fullsize_thumbs_location = wx.TextCtrl( info_panel )
-        self._fullsize_thumbs_location.Disable()
+        self._thumbnails_location_set = ClientGUICommon.BetterButton( info_panel, 'set', self._SetThumbnailLocation )
         
-        self._resized_thumbs_location_set = ClientGUICommon.BetterButton( info_panel, 'set', self._SetResizedThumbnailLocation )
-        self._fullsize_thumbs_location_set = ClientGUICommon.BetterButton( info_panel, 'set', self._SetFullsizeThumbnailLocation )
-        
-        self._resized_thumbs_location_clear = ClientGUICommon.BetterButton( info_panel, 'clear', self._ClearResizedThumbnailLocation )
-        self._fullsize_thumbs_location_clear = ClientGUICommon.BetterButton( info_panel, 'clear', self._ClearFullsizeThumbnailLocation )
+        self._thumbnails_location_clear = ClientGUICommon.BetterButton( info_panel, 'clear', self._ClearThumbnailLocation )
         
         self._rebalance_status_st = ClientGUICommon.BetterStaticText( info_panel, style = wx.ALIGN_RIGHT | wx.ST_NO_AUTORESIZE )
         
@@ -389,19 +417,12 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         #
         
-        r_hbox = wx.BoxSizer( wx.HORIZONTAL )
-        
-        r_hbox.Add( ClientGUICommon.BetterStaticText( info_panel, 'resized thumbnail location' ), CC.FLAGS_VCENTER )
-        r_hbox.Add( self._resized_thumbs_location, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
-        r_hbox.Add( self._resized_thumbs_location_set, CC.FLAGS_VCENTER )
-        r_hbox.Add( self._resized_thumbs_location_clear, CC.FLAGS_VCENTER )
-        
         t_hbox = wx.BoxSizer( wx.HORIZONTAL )
         
-        t_hbox.Add( ClientGUICommon.BetterStaticText( info_panel, 'full-size thumbnail location' ), CC.FLAGS_VCENTER )
-        t_hbox.Add( self._fullsize_thumbs_location, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
-        t_hbox.Add( self._fullsize_thumbs_location_set, CC.FLAGS_VCENTER )
-        t_hbox.Add( self._fullsize_thumbs_location_clear, CC.FLAGS_VCENTER )
+        t_hbox.Add( ClientGUICommon.BetterStaticText( info_panel, 'thumbnail location override' ), CC.FLAGS_VCENTER )
+        t_hbox.Add( self._thumbnails_location, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
+        t_hbox.Add( self._thumbnails_location_set, CC.FLAGS_VCENTER )
+        t_hbox.Add( self._thumbnails_location_clear, CC.FLAGS_VCENTER )
         
         rebalance_hbox = wx.BoxSizer( wx.HORIZONTAL )
         
@@ -412,7 +433,6 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         info_panel.Add( self._current_db_path_st, CC.FLAGS_EXPAND_PERPENDICULAR )
         info_panel.Add( self._current_media_paths_st, CC.FLAGS_EXPAND_PERPENDICULAR )
         info_panel.Add( current_media_locations_listctrl_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
-        info_panel.Add( r_hbox, CC.FLAGS_EXPAND_PERPENDICULAR )
         info_panel.Add( t_hbox, CC.FLAGS_EXPAND_PERPENDICULAR )
         info_panel.Add( rebalance_hbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         
@@ -430,7 +450,7 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         self.SetSizer( vbox )
         
-        min_width = ClientGUICommon.ConvertTextToPixelWidth( self, 100 )
+        min_width = ClientGUIFunctions.ConvertTextToPixelWidth( self, 100 )
         
         self.SetMinSize( ( min_width, -1 ) )
         
@@ -439,30 +459,28 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _AddPath( self, path, starting_weight = 1 ):
         
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
-        
-        if path in locations_to_ideal_weights:
+        if path in self._locations_to_ideal_weights:
             
             wx.MessageBox( 'You already have that location entered!' )
             
             return
             
         
-        if path == resized_thumbnail_override or path == full_size_thumbnail_override:
+        if path == self._ideal_thumbnails_location_override:
             
-            wx.MessageBox( 'That path is already used as a special thumbnail location--please choose another.' )
+            wx.MessageBox( 'That path is already used as the special thumbnail location--please choose another.' )
             
             return
             
         
-        self._new_options.SetClientFilesLocation( path, 1 )
+        self._locations_to_ideal_weights[ path ] = 1
+        
+        self._controller.Write( 'ideal_client_files_locations', self._locations_to_ideal_weights, self._ideal_thumbnails_location_override )
         
         self._Update()
         
     
     def _AdjustWeight( self, amount ):
-        
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
         
         adjustees = set()
         
@@ -472,15 +490,17 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             location = locations[0]
             
-            if location in locations_to_ideal_weights:
+            if location in self._locations_to_ideal_weights:
                 
-                current_weight = locations_to_ideal_weights[ location ]
+                current_weight = self._locations_to_ideal_weights[ location ]
                 
                 new_amount = current_weight + amount
                 
                 if new_amount > 0:
                     
-                    self._new_options.SetClientFilesLocation( location, new_amount )
+                    self._locations_to_ideal_weights[ location ] = new_amount
+                    
+                    self._controller.Write( 'ideal_client_files_locations', self._locations_to_ideal_weights, self._ideal_thumbnails_location_override )
                     
                 elif new_amount <= 0:
                     
@@ -491,7 +511,7 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
                 
                 if amount > 0:
                     
-                    if location not in ( resized_thumbnail_override, full_size_thumbnail_override ):
+                    if location != self._ideal_thumbnails_location_override:
                         
                         self._AddPath( location, starting_weight = amount )
                         
@@ -505,22 +525,20 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _CanDecreaseWeight( self ):
         
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
-        
         locations = self._current_media_locations_listctrl.GetData( only_selected = True )
         
         if len( locations ) > 0:
             
             location = locations[0]
             
-            if location in locations_to_ideal_weights:
+            if location in self._locations_to_ideal_weights:
                 
                 selection_includes_ideal_locations = True
                 
-                ideal_weight = locations_to_ideal_weights[ location ]
+                ideal_weight = self._locations_to_ideal_weights[ location ]
                 
                 is_big = ideal_weight > 1
-                others_can_take_slack = len( locations_to_ideal_weights ) > 1
+                others_can_take_slack = len( self._locations_to_ideal_weights ) > 1
                 
                 if is_big or others_can_take_slack:
                     
@@ -534,9 +552,7 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _CanIncreaseWeight( self ):
         
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
-        
-        ( locations_to_file_weights, locations_to_fs_thumb_weights, locations_to_r_thumb_weights ) = self._GetLocationsToCurrentWeights()
+        ( locations_to_file_weights, locations_to_thumb_weights ) = self._GetLocationsToCurrentWeights()
         
         locations = self._current_media_locations_listctrl.GetData( only_selected = True )
         
@@ -544,9 +560,9 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             location = locations[0]
             
-            if location in locations_to_ideal_weights:
+            if location in self._locations_to_ideal_weights:
                 
-                if len( locations_to_ideal_weights ) > 1:
+                if len( self._locations_to_ideal_weights ) > 1:
                     
                     return True
                     
@@ -560,33 +576,25 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         return False
         
     
-    def _ClearFullsizeThumbnailLocation( self ):
+    def _ClearThumbnailLocation( self ):
         
-        self._new_options.SetFullsizeThumbnailOverride( None )
+        self._ideal_thumbnails_location_override = None
         
-        self._Update()
-        
-    
-    def _ClearResizedThumbnailLocation( self ):
-        
-        self._new_options.SetResizedThumbnailOverride( None )
+        self._controller.Write( 'ideal_client_files_locations', self._locations_to_ideal_weights, self._ideal_thumbnails_location_override )
         
         self._Update()
         
     
     def _ConvertLocationToListCtrlTuples( self, location ):
         
+        thumbnail_ratio_estimate = self._GetThumbnailRatioEstimate()
+        
         f_space = self._all_local_files_total_size
-        r_space = self._all_local_files_total_size * self.RESIZED_RATIO
-        t_space = self._all_local_files_total_size * self.FULLSIZE_RATIO
-        
-        # ideal
-        
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
+        t_space = self._all_local_files_total_size * thumbnail_ratio_estimate
         
         # current
         
-        ( locations_to_file_weights, locations_to_fs_thumb_weights, locations_to_r_thumb_weights ) = self._GetLocationsToCurrentWeights()
+        ( locations_to_file_weights, locations_to_thumb_weights ) = self._GetLocationsToCurrentWeights()
         
         #
         
@@ -607,7 +615,7 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         try:
             
             free_space = HydrusPaths.GetFreeSpace( location )
-            pretty_free_space = HydrusData.ConvertIntToBytes( free_space )
+            pretty_free_space = HydrusData.ToHumanBytes( free_space )
             
         except Exception as e:
             
@@ -623,14 +631,13 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
             
         
         fp = locations_to_file_weights[ location ] / 256.0
-        tp = locations_to_fs_thumb_weights[ location ] / 256.0
-        rp = locations_to_r_thumb_weights[ location ] / 256.0
+        tp = locations_to_thumb_weights[ location ] / 256.0
         
         p = HydrusData.ConvertFloatToPercentage
         
-        current_bytes = fp * f_space + tp * t_space + rp * r_space
+        current_bytes = fp * f_space + tp * t_space
         
-        current_usage = ( fp, tp, rp )
+        current_usage = ( fp, tp )
         
         usages = []
         
@@ -641,22 +648,17 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         if tp > 0:
             
-            usages.append( p( tp ) + ' full-size thumbnails' )
-            
-        
-        if rp > 0:
-            
-            usages.append( p( rp ) + ' resized thumbnails' )
+            usages.append( p( tp ) + ' thumbnails' )
             
         
         if len( usages ) > 0:
             
-            if fp == tp and tp == rp:
+            if fp == tp:
                 
                 usages = [ p( fp ) + ' everything' ]
                 
             
-            pretty_current_usage = HydrusData.ConvertIntToBytes( current_bytes ) + ' - ' + ','.join( usages )
+            pretty_current_usage = HydrusData.ToHumanBytes( current_bytes ) + ' - ' + ','.join( usages )
             
         else:
             
@@ -665,9 +667,9 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         #
         
-        if location in locations_to_ideal_weights:
+        if location in self._locations_to_ideal_weights:
             
-            ideal_weight = locations_to_ideal_weights[ location ]
+            ideal_weight = self._locations_to_ideal_weights[ location ]
             
             pretty_ideal_weight = str( int( ideal_weight ) )
             
@@ -685,24 +687,24 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
                 
             
         
-        if location in locations_to_ideal_weights:
+        if location in self._locations_to_ideal_weights:
             
-            total_ideal_weight = sum( locations_to_ideal_weights.values() )
+            total_ideal_weight = sum( self._locations_to_ideal_weights.values() )
             
-            ideal_fp = locations_to_ideal_weights[ location ] / float( total_ideal_weight )
+            ideal_fp = self._locations_to_ideal_weights[ location ] / total_ideal_weight
             
         else:
             
             ideal_fp = 0.0
             
         
-        if full_size_thumbnail_override is None:
+        if self._ideal_thumbnails_location_override is None:
             
             ideal_tp = ideal_fp
             
         else:
             
-            if location == full_size_thumbnail_override:
+            if location == self._ideal_thumbnails_location_override:
                 
                 ideal_tp = 1.0
                 
@@ -712,25 +714,9 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
                 
             
         
-        if resized_thumbnail_override is None:
-            
-            ideal_rp = ideal_fp
-            
-        else:
-            
-            if location == resized_thumbnail_override:
-                
-                ideal_rp = 1.0
-                
-            else:
-                
-                ideal_rp = 0.0
-                
-            
+        ideal_bytes = ideal_fp * f_space + ideal_tp * t_space
         
-        ideal_bytes = ideal_fp * f_space + ideal_tp * t_space + ideal_rp * r_space
-        
-        ideal_usage = ( ideal_fp, ideal_tp, ideal_rp )
+        ideal_usage = ( ideal_fp, ideal_tp )
         
         usages = []
         
@@ -741,22 +727,17 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         if ideal_tp > 0:
             
-            usages.append( p( ideal_tp ) + ' full-size thumbnails' )
-            
-        
-        if ideal_rp > 0:
-            
-            usages.append( p( ideal_rp ) + ' resized thumbnails' )
+            usages.append( p( ideal_tp ) + ' thumbnails' )
             
         
         if len( usages ) > 0:
             
-            if ideal_fp == ideal_tp and ideal_tp == ideal_rp:
+            if ideal_fp == ideal_tp:
                 
                 usages = [ p( ideal_fp ) + ' everything' ]
                 
             
-            pretty_ideal_usage = HydrusData.ConvertIntToBytes( ideal_bytes ) + ' - ' + ','.join( usages )
+            pretty_ideal_usage = HydrusData.ToHumanBytes( ideal_bytes ) + ' - ' + ','.join( usages )
             
         else:
             
@@ -776,13 +757,10 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _GetLocationsToCurrentWeights( self ):
         
-        prefixes_to_locations = HG.client_controller.Read( 'client_files_locations' )
-        
         locations_to_file_weights = collections.Counter()
-        locations_to_fs_thumb_weights = collections.Counter()
-        locations_to_r_thumb_weights = collections.Counter()
+        locations_to_thumb_weights = collections.Counter()
         
-        for ( prefix, location ) in prefixes_to_locations.items():
+        for ( prefix, location ) in list(self._prefixes_to_locations.items()):
             
             if prefix.startswith( 'f' ):
                 
@@ -791,49 +769,50 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             if prefix.startswith( 't' ):
                 
-                locations_to_fs_thumb_weights[ location ] += 1
-                
-            
-            if prefix.startswith( 'r' ):
-                
-                locations_to_r_thumb_weights[ location ] += 1
+                locations_to_thumb_weights[ location ] += 1
                 
             
         
-        return ( locations_to_file_weights, locations_to_fs_thumb_weights, locations_to_r_thumb_weights )
+        return ( locations_to_file_weights, locations_to_thumb_weights )
         
     
     def _GetListCtrlLocations( self ):
         
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
-        
         # current
         
-        ( locations_to_file_weights, locations_to_fs_thumb_weights, locations_to_r_thumb_weights ) = self._GetLocationsToCurrentWeights()
+        ( locations_to_file_weights, locations_to_thumb_weights ) = self._GetLocationsToCurrentWeights()
         
         #
         
         all_locations = set()
         
-        all_locations.update( locations_to_ideal_weights.keys() )
+        all_locations.update( list(self._locations_to_ideal_weights.keys()) )
         
-        if resized_thumbnail_override is not None:
+        if self._ideal_thumbnails_location_override is not None:
             
-            all_locations.add( resized_thumbnail_override )
-            
-        
-        if full_size_thumbnail_override is not None:
-            
-            all_locations.add( full_size_thumbnail_override )
+            all_locations.add( self._ideal_thumbnails_location_override )
             
         
-        all_locations.update( locations_to_file_weights.keys() )
-        all_locations.update( locations_to_fs_thumb_weights.keys() )
-        all_locations.update( locations_to_r_thumb_weights.keys() )
+        all_locations.update( list(locations_to_file_weights.keys()) )
+        all_locations.update( list(locations_to_thumb_weights.keys()) )
         
         all_locations = list( all_locations )
         
         return all_locations
+        
+    
+    def _GetThumbnailRatioEstimate( self ):
+        
+        ( t_width, t_height ) = HG.client_controller.options[ 'thumbnail_dimensions' ]
+        
+        normal_num_pixels = 200 * 200
+        normal_ratio = 0.016
+        
+        current_num_pixels = t_width * t_height
+        
+        estimate_ratio = ( current_num_pixels / normal_num_pixels ) * normal_ratio
+        
+        return estimate_ratio
         
     
     def _IncreaseWeight( self ):
@@ -900,11 +879,9 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
                                 
                                 wx.CallAfter( self.GetParent().Close )
                                 
-                                prefixes_to_locations = self._controller.Read( 'client_files_locations' )
-                                
                                 portable_locations = []
                                 
-                                for location in set( prefixes_to_locations.values() ):
+                                for location in set( self._prefixes_to_locations.values() ):
                                     
                                     if not os.path.exists( location ):
                                         
@@ -931,13 +908,43 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _Rebalance( self ):
         
-        job_key = ClientThreading.JobKey( cancellable = True )
+        message = 'Moving files can be a slow and slightly laggy process, with the UI intermittently hanging, which sometimes makes manually stopping a large ongoing job difficult. Would you like to set a max runtime on this job?'
+        
+        yes_tuples = []
+        
+        yes_tuples.append( ( 'run for 10 minutes', 600 ) )
+        yes_tuples.append( ( 'run for 30 minutes', 1800 ) )
+        yes_tuples.append( ( 'run for 1 hour', 3600 ) )
+        yes_tuples.append( ( 'run indefinitely', None ) )
+        
+        with ClientGUIDialogs.DialogYesYesNo( self, message, yes_tuples = yes_tuples, no_label = 'forget it' ) as dlg:
+            
+            if dlg.ShowModal() == wx.ID_YES:
+                
+                value = dlg.GetValue()
+                
+                if value is None:
+                    
+                    stop_time = None
+                    
+                else:
+                    
+                    stop_time = HydrusData.GetNow() + value
+                    
+                
+                job_key = ClientThreading.JobKey( cancellable = True, stop_time = stop_time )
+                
+            else:
+                
+                return
+                
+            
         
         job_key.SetVariable( 'popup_title', 'rebalancing files' )
         
         self._controller.CallToThread( self._controller.client_files_manager.Rebalance, job_key )
         
-        with ClientGUITopLevelWindows.DialogNullipotentVetoable( self, 'migrating files' ) as dlg:
+        with ClientGUITopLevelWindows.DialogNullipotent( self, 'migrating files' ) as dlg:
             
             panel = ClientGUIPopupMessages.PopupMessageDialogPanel( dlg, job_key )
             
@@ -951,20 +958,18 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _RemovePath( self, location ):
         
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
-        
-        ( locations_to_file_weights, locations_to_fs_thumb_weights, locations_to_r_thumb_weights ) = self._GetLocationsToCurrentWeights()
+        ( locations_to_file_weights, locations_to_thumb_weights ) = self._GetLocationsToCurrentWeights()
         
         removees = set()
         
-        if location not in locations_to_ideal_weights:
+        if location not in self._locations_to_ideal_weights:
             
             wx.MessageBox( 'Please select a location with weight.' )
             
             return
             
         
-        if len( locations_to_ideal_weights ) == 1:
+        if len( self._locations_to_ideal_weights ) == 1:
             
             wx.MessageBox( 'You cannot empty every single current file location--please add a new place for the files to be moved to and then try again.' )
             
@@ -982,11 +987,12 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             if dlg.ShowModal() == wx.ID_YES:
                 
-                self._new_options.RemoveClientFilesLocation( location )
+                del self._locations_to_ideal_weights[ location ]
+                
+                self._controller.Write( 'ideal_client_files_locations', self._locations_to_ideal_weights, self._ideal_thumbnails_location_override )
                 
                 self._Update()
                 
-            
             
         
     
@@ -996,64 +1002,35 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             if dlg.ShowModal() == wx.ID_OK:
                 
-                path = HydrusData.ToUnicode( dlg.GetPath() )
+                path = dlg.GetPath()
                 
                 self._AddPath( path )
                 
             
         
     
-    def _SetFullsizeThumbnailLocation( self ):
-        
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
+    def _SetThumbnailLocation( self ):
         
         with wx.DirDialog( self ) as dlg:
             
-            if full_size_thumbnail_override is not None:
+            if self._ideal_thumbnails_location_override is not None:
                 
-                dlg.SetPath( full_size_thumbnail_override )
+                dlg.SetPath( self._ideal_thumbnails_location_override )
                 
             
             if dlg.ShowModal() == wx.ID_OK:
                 
                 path = dlg.GetPath()
                 
-                if path in locations_to_ideal_weights:
+                if path in self._locations_to_ideal_weights:
                     
                     wx.MessageBox( 'That path already exists as a regular file location! Please choose another.' )
                     
                 else:
                     
-                    self._new_options.SetFullsizeThumbnailOverride( path )
+                    self._ideal_thumbnails_location_override = path
                     
-                    self._Update()
-                    
-                
-            
-        
-    
-    def _SetResizedThumbnailLocation( self ):
-        
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
-        
-        with wx.DirDialog( self ) as dlg:
-            
-            if resized_thumbnail_override is not None:
-                
-                dlg.SetPath( resized_thumbnail_override )
-                
-            
-            if dlg.ShowModal() == wx.ID_OK:
-                
-                path = dlg.GetPath()
-                
-                if path in locations_to_ideal_weights:
-                    
-                    wx.MessageBox( 'That path already exists as a regular file location! Please choose another.' )
-                    
-                else:
-                    
-                    self._new_options.SetResizedThumbnailOverride( path )
+                    self._controller.Write( 'ideal_client_files_locations', self._locations_to_ideal_weights, self._ideal_thumbnails_location_override )
                     
                     self._Update()
                     
@@ -1063,22 +1040,21 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _Update( self ):
         
+        self._prefixes_to_locations = HG.client_controller.Read( 'client_files_locations' )
+        
+        ( self._locations_to_ideal_weights, self._ideal_thumbnails_location_override ) = self._controller.Read( 'ideal_client_files_locations' )
+        
         approx_total_db_size = self._controller.db.GetApproxTotalFileSize()
         
-        self._current_db_path_st.SetLabelText( 'database (about ' + HydrusData.ConvertIntToBytes( approx_total_db_size ) + '): ' + self._controller.GetDBDir() )
+        self._current_db_path_st.SetLabelText( 'database (about ' + HydrusData.ToHumanBytes( approx_total_db_size ) + '): ' + self._controller.GetDBDir() )
         self._current_install_path_st.SetLabelText( 'install: ' + HC.BASE_DIR )
         
+        thumbnail_ratio_estimate = self._GetThumbnailRatioEstimate()
+        
         approx_total_client_files = self._all_local_files_total_size
-        approx_total_resized_thumbs = self._all_local_files_total_size * self.RESIZED_RATIO
-        approx_total_fullsize_thumbs = self._all_local_files_total_size * self.FULLSIZE_RATIO
+        approx_total_thumbnails = self._all_local_files_total_size * thumbnail_ratio_estimate
         
-        label_components = []
-        
-        label_components.append( 'media (about ' + HydrusData.ConvertIntToBytes( approx_total_client_files ) + ')' )
-        label_components.append( 'resized thumbnails (about ' + HydrusData.ConvertIntToBytes( approx_total_resized_thumbs ) + ')' )
-        label_components.append( 'full-size thumbnails (about ' + HydrusData.ConvertIntToBytes( approx_total_fullsize_thumbs ) + ')' )
-        
-        label = ', '.join( label_components ) + ':'
+        label = 'media is ' + HydrusData.ToHumanBytes( approx_total_client_files ) + ', thumbnails are estimated at ' + HydrusData.ToHumanBytes( approx_total_thumbnails ) + ':'
         
         self._current_media_paths_st.SetLabelText( label )
         
@@ -1088,36 +1064,19 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         #
         
-        ( locations_to_ideal_weights, resized_thumbnail_override, full_size_thumbnail_override ) = self._new_options.GetClientFilesLocationsToIdealWeights()
-        
-        if resized_thumbnail_override is None:
+        if self._ideal_thumbnails_location_override is None:
             
-            self._resized_thumbs_location.SetValue( 'none set' )
+            self._thumbnails_location.SetValue( 'none set' )
             
-            self._resized_thumbs_location_set.Enable()
-            self._resized_thumbs_location_clear.Disable()
+            self._thumbnails_location_set.Enable()
+            self._thumbnails_location_clear.Disable()
             
         else:
             
-            self._resized_thumbs_location.SetValue( resized_thumbnail_override )
+            self._thumbnails_location.SetValue( self._ideal_thumbnails_location_override )
             
-            self._resized_thumbs_location_set.Disable()
-            self._resized_thumbs_location_clear.Enable()
-            
-        
-        if full_size_thumbnail_override is None:
-            
-            self._fullsize_thumbs_location.SetValue( 'none set' )
-            
-            self._fullsize_thumbs_location_set.Enable()
-            self._fullsize_thumbs_location_clear.Disable()
-            
-        else:
-            
-            self._fullsize_thumbs_location.SetValue( full_size_thumbnail_override )
-            
-            self._fullsize_thumbs_location_set.Disable()
-            self._fullsize_thumbs_location_clear.Enable()
+            self._thumbnails_location_set.Disable()
+            self._thumbnails_location_clear.Enable()
             
         
         #
@@ -1152,7 +1111,7 @@ def THREADMigrateDatabase( controller, source, portable_locations, dest ):
         
         style_override = wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.DIALOG_NO_PARENT
         
-        with ClientGUITopLevelWindows.DialogNullipotentVetoable( None, 'migrating files', style_override = style_override ) as dlg:
+        with ClientGUITopLevelWindows.DialogNullipotent( None, 'migrating files', style_override = style_override ) as dlg:
             
             panel = ClientGUIPopupMessages.PopupMessageDialogPanel( dlg, job_key )
             
@@ -1236,7 +1195,7 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
         self._history_time_delta_none = wx.CheckBox( self, label = 'show all' )
         self._history_time_delta_none.Bind( wx.EVT_CHECKBOX, self.EventTimeDeltaChanged )
         
-        columns = [ ( 'name', -1 ), ( 'type', 14 ), ( 'current usage', 14 ), ( 'past 24 hours', 15 ), ( 'search distance', 17 ), ( 'this month', 12 ), ( 'has specific rules', 18 ), ( 'blocked?', 10 ) ]
+        columns = [ ( 'name', -1 ), ( 'type', 14 ), ( 'current usage', 14 ), ( 'past 24 hours', 15 ), ( 'search distance', 17 ), ( 'this month', 12 ), ( 'uses non-default rules', 24 ), ( 'blocked?', 10 ) ]
         
         self._bandwidths = ClientGUIListCtrl.BetterListCtrl( self, 'bandwidth review', 20, 30, columns, self._ConvertNetworkContextsToListCtrlTuples, activation_callback = self.ShowNetworkContext )
         
@@ -1327,10 +1286,10 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             search_usage = ( search_usage_data, search_usage_requests )
             
-            pretty_search_usage = HydrusData.ConvertIntToBytes( search_usage_data ) + ' in ' + HydrusData.ToHumanInt( search_usage_requests ) + ' requests'
+            pretty_search_usage = HydrusData.ToHumanBytes( search_usage_data ) + ' in ' + HydrusData.ToHumanInt( search_usage_requests ) + ' requests'
             
         
-        pretty_network_context = network_context.ToUnicode()
+        pretty_network_context = network_context.ToString()
         pretty_context_type = CC.network_context_type_string_lookup[ network_context.context_type ]
         
         if current_usage == 0:
@@ -1339,11 +1298,11 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
         else:
             
-            pretty_current_usage = HydrusData.ConvertIntToBytes( current_usage ) + '/s'
+            pretty_current_usage = HydrusData.ToHumanBytes( current_usage ) + '/s'
             
         
-        pretty_day_usage = HydrusData.ConvertIntToBytes( day_usage_data ) + ' in ' + HydrusData.ToHumanInt( day_usage_requests ) + ' requests'
-        pretty_month_usage = HydrusData.ConvertIntToBytes( month_usage_data ) + ' in ' + HydrusData.ToHumanInt( month_usage_requests ) + ' requests'
+        pretty_day_usage = HydrusData.ToHumanBytes( day_usage_data ) + ' in ' + HydrusData.ToHumanInt( day_usage_requests ) + ' requests'
+        pretty_month_usage = HydrusData.ToHumanBytes( month_usage_data ) + ' in ' + HydrusData.ToHumanInt( month_usage_requests ) + ' requests'
         
         if has_rules:
             
@@ -1354,11 +1313,11 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
             pretty_has_rules = ''
             
         
-        blocked = not self._controller.network_engine.bandwidth_manager.CanDoWork( [ network_context ] )
+        ( waiting_estimate, network_context_gumpf ) = self._controller.network_engine.bandwidth_manager.GetWaitingEstimateAndContext( [ network_context ] )
         
-        if blocked:
+        if waiting_estimate > 0:
             
-            pretty_blocked = 'yes'
+            pretty_blocked = HydrusData.TimeDeltaToPrettyTimeDelta( waiting_estimate )
             
         else:
             
@@ -1366,7 +1325,7 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
         
         display_tuple = ( pretty_network_context, pretty_context_type, pretty_current_usage, pretty_day_usage, pretty_search_usage, pretty_month_usage, pretty_has_rules, pretty_blocked )
-        sort_tuple = ( sortable_network_context, sortable_context_type, current_usage, day_usage, search_usage, month_usage, has_rules, blocked )
+        sort_tuple = ( sortable_network_context, sortable_context_type, current_usage, day_usage, search_usage, month_usage, has_rules, waiting_estimate )
         
         return ( display_tuple, sort_tuple )
         
@@ -1392,7 +1351,7 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         network_contexts_and_bandwidth_rules = self._controller.network_engine.bandwidth_manager.GetDefaultRules()
         
-        choice_tuples = [ ( network_context.ToUnicode() + ' (' + str( len( bandwidth_rules.GetRules() ) ) + ' rules)', ( network_context, bandwidth_rules ) ) for ( network_context, bandwidth_rules ) in network_contexts_and_bandwidth_rules ]
+        choice_tuples = [ ( network_context.ToString() + ' (' + str( len( bandwidth_rules.GetRules() ) ) + ' rules)', ( network_context, bandwidth_rules ) ) for ( network_context, bandwidth_rules ) in network_contexts_and_bandwidth_rules ]
         
         try:
             
@@ -1403,7 +1362,7 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
             return
             
         
-        with ClientGUITopLevelWindows.DialogEdit( self, 'edit bandwidth rules for ' + network_context.ToUnicode() ) as dlg_2:
+        with ClientGUITopLevelWindows.DialogEdit( self, 'edit bandwidth rules for ' + network_context.ToString() ) as dlg_2:
             
             summary = network_context.GetSummary()
             
@@ -1493,7 +1452,7 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             parent = self.GetTopLevelParent().GetParent()
             
-            frame = ClientGUITopLevelWindows.FrameThatTakesScrollablePanel( parent, 'review bandwidth for ' + network_context.ToUnicode() )
+            frame = ClientGUITopLevelWindows.FrameThatTakesScrollablePanel( parent, 'review bandwidth for ' + network_context.ToString() )
             
             panel = ReviewNetworkContextBandwidthPanel( frame, self._controller, network_context )
             
@@ -1529,6 +1488,8 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
         
         win = ClientGUICommon.BufferedWindowIcon( self, lain_bmp )
         
+        win.SetCursor( wx.Cursor( wx.CURSOR_HAND ) )
+        
         self._select_from_list = wx.CheckBox( self )
         
         if HG.client_controller.new_options.GetBoolean( 'advanced_mode' ):
@@ -1547,22 +1508,24 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
         
         win.SetDropTarget( ClientDragDrop.FileDropTarget( self, filenames_callable = self.ImportFromDragDrop ) )
         
+        win.Bind( wx.EVT_LEFT_DOWN, self.EventLainClick )
+        
     
-    def ImportFromDragDrop( self, paths ):
+    def _ImportPaths( self, paths ):
         
         gugs = []
-        url_matches = []
+        url_classes = []
         parsers = []
         domain_metadatas = []
+        login_scripts = []
         
         num_misc_objects = 0
         
         bandwidth_manager = self._network_engine.bandwidth_manager
         domain_manager = self._network_engine.domain_manager
+        login_manager = self._network_engine.login_manager
         
         for path in paths:
-            
-            path = HydrusData.ToUnicode( path )
             
             try:
                 
@@ -1570,14 +1533,14 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
                 
             except Exception as e:
                 
-                wx.MessageBox( HydrusData.ToUnicode( e ) )
+                wx.MessageBox( str( e ) )
                 
                 return
                 
             
             try:
                 
-                obj_list = HydrusSerialisable.CreateFromNetworkString( payload )
+                obj_list = HydrusSerialisable.CreateFromNetworkBytes( payload )
                 
             except:
                 
@@ -1586,7 +1549,7 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
                 continue
                 
             
-            if isinstance( obj_list, ( ClientNetworkingDomain.GalleryURLGenerator, ClientNetworkingDomain.NestedGalleryURLGenerator, ClientNetworkingDomain.URLMatch, ClientParsing.PageParser, ClientNetworkingDomain.DomainMetadataPackage ) ):
+            if isinstance( obj_list, ( ClientNetworkingDomain.GalleryURLGenerator, ClientNetworkingDomain.NestedGalleryURLGenerator, ClientNetworkingDomain.URLClass, ClientParsing.PageParser, ClientNetworkingDomain.DomainMetadataPackage, ClientNetworkingLogin.LoginScriptDomain ) ):
                 
                 obj_list = HydrusSerialisable.SerialisableList( [ obj_list ] )
                 
@@ -1604,9 +1567,9 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
                     
                     gugs.append( obj )
                     
-                elif isinstance( obj, ClientNetworkingDomain.URLMatch ):
+                elif isinstance( obj, ClientNetworkingDomain.URLClass ):
                     
-                    url_matches.append( obj )
+                    url_classes.append( obj )
                     
                 elif isinstance( obj, ClientParsing.PageParser ):
                     
@@ -1615,6 +1578,10 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
                 elif isinstance( obj, ClientNetworkingDomain.DomainMetadataPackage ):
                     
                     domain_metadatas.append( obj )
+                    
+                elif isinstance( obj, ClientNetworkingLogin.LoginScriptDomain ):
+                    
+                    login_scripts.append( obj )
                     
                 else:
                     
@@ -1635,29 +1602,45 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
         
         # url matches first
         
-        dupe_url_matches = []
-        num_exact_dupe_url_matches = 0
-        new_url_matches = []
+        url_class_names_seen = set()
         
-        for url_match in url_matches:
+        dupe_url_classes = []
+        num_exact_dupe_url_classes = 0
+        new_url_classes = []
+        
+        for url_class in url_classes:
             
-            if domain_manager.AlreadyHaveExactlyThisURLMatch( url_match ):
+            if url_class.GetName() in url_class_names_seen:
                 
-                dupe_url_matches.append( url_match )
-                num_exact_dupe_url_matches += 1
+                continue
+                
+            
+            if domain_manager.AlreadyHaveExactlyThisURLClass( url_class ):
+                
+                dupe_url_classes.append( url_class )
+                num_exact_dupe_url_classes += 1
                 
             else:
                 
-                new_url_matches.append( url_match )
+                new_url_classes.append( url_class )
+                
+                url_class_names_seen.add( url_class.GetName() )
                 
             
         
         # now gugs
         
+        gug_names_seen = set()
+        
         num_exact_dupe_gugs = 0
         new_gugs = []
         
         for gug in gugs:
+            
+            if gug.GetName() in gug_names_seen:
+                
+                continue
+                
             
             if domain_manager.AlreadyHaveExactlyThisGUG( gug ):
                 
@@ -1667,14 +1650,23 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
                 
                 new_gugs.append( gug )
                 
+                gug_names_seen.add( gug.GetName() )
+                
             
         
         # now parsers
+        
+        parser_names_seen = set()
         
         num_exact_dupe_parsers = 0
         new_parsers = []
         
         for parser in parsers:
+            
+            if parser.GetName() in parser_names_seen:
+                
+                continue
+                
             
             if domain_manager.AlreadyHaveExactlyThisParser( parser ):
                 
@@ -1684,9 +1676,39 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
                 
                 new_parsers.append( parser )
                 
+                parser_names_seen.add( parser.GetName() )
+                
+            
+        
+        # now login scripts
+        
+        login_script_names_seen = set()
+        
+        num_exact_dupe_login_scripts = 0
+        new_login_scripts = []
+        
+        for login_script in login_scripts:
+            
+            if login_script.GetName() in login_script_names_seen:
+                
+                continue
+                
+            
+            if login_manager.AlreadyHaveExactlyThisLoginScript( login_script ):
+                
+                num_exact_dupe_login_scripts += 1
+                
+            else:
+                
+                new_login_scripts.append( login_script )
+                
+                login_script_names_seen.add( login_script.GetName() )
+                
             
         
         # now domain metadata
+        
+        domains_seen = set()
         
         num_exact_dupe_domain_metadatas = 0
         new_domain_metadatas = []
@@ -1698,6 +1720,11 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
             domain = domain_metadata.GetDomain()
             headers_list = None
             bandwidth_rules = None
+            
+            if domain in domains_seen:
+                
+                continue
+                
             
             nc = ClientNetworkingContexts.NetworkContext( CC.NETWORK_CONTEXT_DOMAIN, domain )
             
@@ -1731,13 +1758,15 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
                 
                 new_domain_metadatas.append( new_dm )
                 
+                domains_seen.add( domain )
+                
             
         
         #
         
-        total_num_dupes = num_exact_dupe_gugs + num_exact_dupe_url_matches + num_exact_dupe_parsers + num_exact_dupe_domain_metadatas
+        total_num_dupes = num_exact_dupe_gugs + num_exact_dupe_url_classes + num_exact_dupe_parsers + num_exact_dupe_domain_metadatas + num_exact_dupe_login_scripts
         
-        if len( new_gugs ) + len( new_url_matches ) + len( new_parsers ) + len( new_domain_metadatas ) == 0:
+        if len( new_gugs ) + len( new_url_classes ) + len( new_parsers ) + len( new_domain_metadatas ) + len( new_login_scripts ) == 0:
             
             wx.MessageBox( 'All ' + HydrusData.ToHumanInt( total_num_dupes ) + ' downloader objects in that package appeared to already be in the client, so nothing need be added.' )
             
@@ -1750,8 +1779,9 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
             
             choice_tuples = []
             choice_tuples.extend( [ ( 'GUG: ' + gug.GetName(), gug, True ) for gug in new_gugs ] )
-            choice_tuples.extend( [ ( 'URL Class: ' + url_match.GetName(), url_match, True ) for url_match in new_url_matches ] )
+            choice_tuples.extend( [ ( 'URL Class: ' + url_class.GetName(), url_class, True ) for url_class in new_url_classes ] )
             choice_tuples.extend( [ ( 'Parser: ' + parser.GetName(), parser, True ) for parser in new_parsers ] )
+            choice_tuples.extend( [ ( 'Login Script: ' + login_script.GetName(), login_script, True ) for login_script in new_login_scripts ] )
             choice_tuples.extend( [ ( 'Domain Metadata: ' + domain_metadata.GetDomain(), domain_metadata, True ) for domain_metadata in new_domain_metadatas ] )
             
             with ClientGUITopLevelWindows.DialogEdit( self, 'select objects to add' ) as dlg:
@@ -1765,8 +1795,9 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
                     new_objects = panel.GetValue()
                     
                     new_gugs = [ obj for obj in new_objects if isinstance( obj, ( ClientNetworkingDomain.GalleryURLGenerator, ClientNetworkingDomain.NestedGalleryURLGenerator ) ) ]
-                    new_url_matches = [ obj for obj in new_objects if isinstance( obj, ClientNetworkingDomain.URLMatch ) ]
+                    new_url_classes = [ obj for obj in new_objects if isinstance( obj, ClientNetworkingDomain.URLClass ) ]
                     new_parsers = [ obj for obj in new_objects if isinstance( obj, ClientParsing.PageParser ) ]
+                    new_login_scripts = [ obj for obj in new_objects if isinstance( obj, ClientNetworkingLogin.LoginScriptDomain ) ]
                     new_domain_metadatas = [ obj for obj in new_objects if isinstance( obj, ClientNetworkingDomain.DomainMetadataPackage ) ]
                     
                 else:
@@ -1779,8 +1810,9 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
         # final ask
         
         new_gugs.sort( key = lambda o: o.GetName() )
-        new_url_matches.sort( key = lambda o: o.GetName() )
+        new_url_classes.sort( key = lambda o: o.GetName() )
         new_parsers.sort( key = lambda o: o.GetName() )
+        new_login_scripts.sort( key = lambda o: o.GetName() )
         new_domain_metadatas.sort( key = lambda o: o.GetDomain() )
         
         if len( new_domain_metadatas ) > 0:
@@ -1804,8 +1836,9 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
             
         
         all_to_add = list( new_gugs )
-        all_to_add.extend( new_url_matches )
+        all_to_add.extend( new_url_classes )
         all_to_add.extend( new_parsers )
+        all_to_add.extend( new_login_scripts )
         all_to_add.extend( new_domain_metadatas )
         
         message = 'The client is about to add and link these objects:'
@@ -1836,15 +1869,16 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
             domain_manager.AddGUGs( new_gugs )
             
         
-        domain_manager.AutoAddURLMatchesAndParsers( new_url_matches, dupe_url_matches, new_parsers )
+        domain_manager.AutoAddURLClassesAndParsers( new_url_classes, dupe_url_classes, new_parsers )
         
         bandwidth_manager.AutoAddDomainMetadatas( new_domain_metadatas )
         domain_manager.AutoAddDomainMetadatas( new_domain_metadatas, approved = True )
+        login_manager.AutoAddLoginScripts( new_login_scripts )
         
         num_new_gugs = len( new_gugs )
-        num_aux = len( new_url_matches ) + len( new_parsers )
+        num_aux = len( new_url_classes ) + len( new_parsers ) + len( new_login_scripts ) + len( new_domain_metadatas )
         
-        final_message = 'Successfully added ' + HydrusData.ToHumanInt( len( new_gugs ) ) + ' new downloaders and ' + HydrusData.ToHumanInt( len( new_url_matches ) + len( new_parsers ) + len( new_domain_metadatas ) ) + ' auxiliary objects.'
+        final_message = 'Successfully added ' + HydrusData.ToHumanInt( num_new_gugs ) + ' new downloaders and ' + HydrusData.ToHumanInt( num_aux ) + ' auxiliary objects.'
         
         if total_num_dupes > 0:
             
@@ -1854,13 +1888,389 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
         wx.MessageBox( final_message )
         
     
+    def EventLainClick( self, event ):
+        
+        with wx.FileDialog( self, 'Select the pngs to add.', style = wx.FD_OPEN | wx.FD_MULTIPLE ) as dlg:
+            
+            if dlg.ShowModal() == wx.ID_OK:
+                
+                paths = dlg.GetPaths()
+                
+                self._ImportPaths( paths )
+                
+            
+        
+    
+    def ImportFromDragDrop( self, paths ):
+        
+        self._ImportPaths( paths )
+        
+    
+class ReviewFileMaintenance( ClientGUIScrolledPanels.ReviewPanel ):
+    
+    def __init__( self, parent, stats ):
+        
+        ClientGUIScrolledPanels.ReviewPanel.__init__( self, parent )
+        
+        self._hash_ids = None
+        self._job_types_to_counts = {}
+        
+        self._notebook = ClientGUICommon.BetterNotebook( self )
+        
+        #
+        
+        self._current_work_panel = wx.Panel( self._notebook )
+        
+        jobs_listctrl_panel = ClientGUIListCtrl.BetterListCtrlPanel( self._current_work_panel )
+        
+        columns = [ ( 'job type', -1 ), ( 'scheduled jobs', 16 ) ]
+        
+        self._jobs_listctrl = ClientGUIListCtrl.BetterListCtrl( jobs_listctrl_panel, 'file maintenance jobs', 8, 48, columns, self._ConvertJobTypeToListCtrlTuples )
+        
+        jobs_listctrl_panel.SetListCtrl( self._jobs_listctrl )
+        
+        jobs_listctrl_panel.AddButton( 'clear', self._DeleteWork, enabled_only_on_selection = True )
+        jobs_listctrl_panel.AddButton( 'do work', self._DoWork, enabled_only_on_selection = True )
+        jobs_listctrl_panel.AddButton( 'do all work', self._DoAllWork, enabled_check_func = self._WorkToDo )
+        jobs_listctrl_panel.AddButton( 'refresh', self._RefreshWorkDue )
+        
+        vbox = wx.BoxSizer( wx.VERTICAL )
+        
+        vbox.Add( jobs_listctrl_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
+        
+        self._current_work_panel.SetSizer( vbox )
+        
+        #
+        
+        self._new_work_panel = wx.Panel( self._notebook )
+        
+        #
+        
+        self._search_panel = ClientGUICommon.StaticBox( self._new_work_panel, 'select files by search' )
+        
+        page_key = HydrusData.GenerateKey()
+        
+        self._current_predicates_box = ClientGUIListBoxes.ListBoxTagsActiveSearchPredicates( self._search_panel, page_key, [] )
+        
+        file_search_context = ClientSearch.FileSearchContext( file_service_key = CC.LOCAL_FILE_SERVICE_KEY )
+        
+        self._tag_ac_input = ClientGUIACDropdown.AutoCompleteDropdownTagsRead( self._search_panel, page_key, file_search_context )
+        
+        self._run_search_st = ClientGUICommon.BetterStaticText( self._search_panel, label = 'no results yet' )
+        
+        self._run_search = ClientGUICommon.BetterButton( self._search_panel, 'run this search', self._RunSearch )
+        
+        hbox = wx.BoxSizer( wx.HORIZONTAL )
+        
+        hbox.Add( self._run_search_st, CC.FLAGS_EXPAND_BOTH_WAYS )
+        hbox.Add( self._run_search, CC.FLAGS_VCENTER )
+        
+        self._search_panel.Add( self._current_predicates_box, CC.FLAGS_EXPAND_BOTH_WAYS )
+        self._search_panel.Add( self._tag_ac_input, CC.FLAGS_EXPAND_PERPENDICULAR )
+        self._search_panel.Add( hbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
+        
+        #
+        
+        self._button_panel = ClientGUICommon.StaticBox( self._new_work_panel, 'select special files' )
+        
+        self._select_repo_files = ClientGUICommon.BetterButton( self._button_panel, 'all repository update files', self._SelectRepoUpdateFiles )
+        
+        self._button_panel.Add( self._select_repo_files, CC.FLAGS_LONE_BUTTON )
+        
+        #
+        
+        self._action_panel = ClientGUICommon.StaticBox( self._new_work_panel, 'add job' )
+        
+        self._selected_files_st = ClientGUICommon.BetterStaticText( self._action_panel, label = 'no files selected yet' )
+        
+        self._action_selector = ClientGUICommon.BetterChoice( self._action_panel )
+        
+        for job_type in ClientFiles.ALL_REGEN_JOBS_IN_PREFERRED_ORDER:
+            
+            self._action_selector.Append( ClientFiles.regen_file_enum_to_str_lookup[ job_type ], job_type )
+            
+        
+        self._add_new_job = ClientGUICommon.BetterButton( self._action_panel, 'add job', self._AddJob )
+        
+        self._add_new_job.Disable()
+        
+        hbox = wx.BoxSizer( wx.HORIZONTAL )
+        
+        hbox.Add( self._selected_files_st, CC.FLAGS_EXPAND_BOTH_WAYS )
+        hbox.Add( self._action_selector, CC.FLAGS_VCENTER )
+        hbox.Add( self._add_new_job, CC.FLAGS_VCENTER )
+        
+        self._action_panel.Add( hbox, CC.FLAGS_EXPAND_BOTH_WAYS )
+        
+        #
+        
+        vbox = wx.BoxSizer( wx.VERTICAL )
+        
+        vbox.Add( self._search_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        vbox.Add( self._button_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        vbox.Add( self._action_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        self._new_work_panel.SetSizer( vbox )
+        
+        #
+        
+        self._notebook.AddPage( self._current_work_panel, 'scheduled work' )
+        self._notebook.AddPage( self._new_work_panel, 'add new work' )
+        
+        vbox = wx.BoxSizer( wx.VERTICAL )
+        
+        vbox.Add( self._notebook, CC.FLAGS_EXPAND_BOTH_WAYS )
+        
+        self.SetSizer( vbox )
+        
+        self._RefreshWorkDue()
+        
+        HG.client_controller.sub( self, '_RefreshWorkDue', 'notify_files_maintenance_done' )
+        
+    
+    def _AddJob( self ):
+        
+        def wx_done():
+            
+            if not self:
+                
+                return
+                
+            
+            wx.MessageBox( 'Jobs added!' )
+            
+            self._add_new_job.Enable()
+            
+            self._RefreshWorkDue()
+            
+        
+        def do_it( hash_ids, job_type ):
+            
+            HG.client_controller.WriteSynchronous( 'file_maintenance_add_jobs', hash_ids, job_type )
+            
+            wx.CallAfter( wx_done )
+            
+        
+        hash_ids = self._hash_ids
+        job_type = self._action_selector.GetChoice()
+        
+        if len( hash_ids ) > 1000:
+            
+            message = 'Are you sure you want to schedule "{}" on {} files?'.format( ClientFiles.regen_file_enum_to_str_lookup[ job_type ], HydrusData.ToHumanInt( len( hash_ids ) ) )
+            
+            with ClientGUIDialogs.DialogYesNo( self, message, yes_label = 'do it', no_label = 'forget it' ) as dlg:
+                
+                if dlg.ShowModal() != wx.ID_YES:
+                    
+                    return
+                    
+                
+            
+        
+        self._add_new_job.Disable()
+        
+        HG.client_controller.CallToThread( do_it, hash_ids, job_type )
+        
+    
+    def _ConvertJobTypeToListCtrlTuples( self, job_type ):
+        
+        pretty_job_type = ClientFiles.regen_file_enum_to_str_lookup[ job_type ]
+        sort_job_type = pretty_job_type
+        
+        if job_type in self._job_types_to_counts:
+            
+            num_to_do = self._job_types_to_counts[ job_type ]
+            
+        else:
+            
+            num_to_do = 0
+            
+        
+        pretty_num_to_do = HydrusData.ToHumanInt( num_to_do )
+        
+        display_tuple = ( pretty_job_type, pretty_num_to_do )
+        sort_tuple = ( sort_job_type, num_to_do )
+        
+        return ( display_tuple, sort_tuple )
+        
+    
+    def _DeleteWork( self ):
+        
+        def wx_done():
+            
+            if not self:
+                
+                return
+                
+            
+            self._RefreshWorkDue()
+            
+        
+        def do_it( job_types ):
+            
+            for job_type in job_types:
+                
+                HG.client_controller.WriteSynchronous( 'file_maintenance_cancel_jobs', job_type )
+                
+            
+            wx.CallAfter( wx_done )
+            
+        
+        message = 'Clear all the selected scheduled work?'
+        
+        with ClientGUIDialogs.DialogYesNo( self, message ) as dlg:
+            
+            if dlg.ShowModal() != wx.ID_YES:
+                
+                return
+                
+            
+        
+        job_types = self._jobs_listctrl.GetData( only_selected = True )
+        
+        HG.client_controller.CallToThread( do_it, job_types )
+        
+    
+    def _DoAllWork( self ):
+        
+        HG.client_controller.CallToThread( HG.client_controller.files_maintenance_manager.DoMaintenance, maintenance_mode = HC.MAINTENANCE_FORCED )
+        
+    
+    def _DoWork( self ):
+        
+        job_types = self._jobs_listctrl.GetData( only_selected = True )
+        
+        if len( job_types ) == 0:
+            
+            return
+            
+        
+        HG.client_controller.CallToThread( HG.client_controller.files_maintenance_manager.DoMaintenance, mandated_job_types = job_types, maintenance_mode = HC.MAINTENANCE_FORCED )
+        
+    
+    def _RefreshWorkDue( self ):
+        
+        def wx_done( job_types_to_counts ):
+            
+            if not self:
+                
+                return
+                
+            
+            self._job_types_to_counts = job_types_to_counts
+            
+            job_types = list( job_types_to_counts.keys() )
+            
+            self._jobs_listctrl.SetData( job_types )
+            
+        
+        def do_it():
+            
+            job_types_to_counts = HG.client_controller.Read( 'file_maintenance_get_job_counts' )
+            
+            wx.CallAfter( wx_done, job_types_to_counts )
+            
+        
+        HG.client_controller.CallToThread( do_it )
+        
+    
+    def _RunSearch( self ):
+        
+        def wx_done( hash_ids ):
+            
+            if not self:
+                
+                return
+                
+            
+            self._run_search_st.SetLabelText( '{} files found'.format( HydrusData.ToHumanInt( len( hash_ids ) ) ) )
+            
+            self._run_search.Enable()
+            
+            self._SetHashIds( hash_ids )
+            
+        
+        def do_it( fsc ):
+            
+            query_hash_ids = HG.client_controller.Read( 'file_query_ids', fsc )
+            
+            wx.CallAfter( wx_done, query_hash_ids )
+            
+        
+        self._run_search_st.SetLabelText( 'loading\u2026' )
+        
+        self._run_search.Disable()
+        
+        file_search_context = self._tag_ac_input.GetFileSearchContext()
+        
+        current_predicates = self._current_predicates_box.GetPredicates()
+        
+        file_search_context.SetPredicates( current_predicates )
+        
+        HG.client_controller.CallToThread( do_it, file_search_context )
+        
+    
+    def _SelectRepoUpdateFiles( self ):
+        
+        def wx_done( hash_ids ):
+            
+            if not self:
+                
+                return
+                
+            
+            self._select_repo_files.Enable()
+            
+            self._SetHashIds( hash_ids )
+            
+        
+        def do_it( fsc ):
+            
+            query_hash_ids = HG.client_controller.Read( 'file_query_ids', fsc )
+            
+            wx.CallAfter( wx_done, query_hash_ids )
+            
+        
+        self._select_repo_files.Disable()
+        
+        file_search_context = ClientSearch.FileSearchContext( file_service_key = CC.LOCAL_UPDATE_SERVICE_KEY )
+        
+        HG.client_controller.CallToThread( do_it, file_search_context )
+        
+    
+    def _SetHashIds( self, hash_ids ):
+        
+        if hash_ids is None:
+            
+            hash_ids = set()
+            
+        
+        self._hash_ids = hash_ids
+        
+        self._selected_files_st.SetLabelText( '{} files selected'.format( HydrusData.ToHumanInt( len( hash_ids ) ) ) )
+        
+        if len( hash_ids ) == 0:
+            
+            self._add_new_job.Disable()
+            
+        else:
+            
+            self._add_new_job.Enable()
+            
+        
+    
+    def _WorkToDo( self ):
+        
+        return len( self._job_types_to_counts ) > 0
+        
+    
 class ReviewHowBonedAmI( ClientGUIScrolledPanels.ReviewPanel ):
     
     def __init__( self, parent, stats ):
         
         ClientGUIScrolledPanels.ReviewPanel.__init__( self, parent )
         
-        ( num_inbox, num_archive, size_inbox, size_archive ) = stats
+        ( num_inbox, num_archive, size_inbox, size_archive, total_viewtime ) = stats
         
         vbox = wx.BoxSizer( wx.VERTICAL )
         
@@ -1869,7 +2279,7 @@ class ReviewHowBonedAmI( ClientGUIScrolledPanels.ReviewPanel ):
         
         if num_total < 1000:
             
-            get_more = ClientGUICommon.BetterStaticText( self, label = 'I hope you enjoy my software. You might like to check out the downloaders!' )
+            get_more = ClientGUICommon.BetterStaticText( self, label = 'I hope you enjoy my software. You might like to check out the downloaders! :^)' )
             
             vbox.Add( get_more, CC.FLAGS_CENTER )
             
@@ -1892,7 +2302,7 @@ class ReviewHowBonedAmI( ClientGUIScrolledPanels.ReviewPanel ):
         
         if num_total == 0:
             
-            nothing_label = 'You have yet to board the ride. Why don\'t you try importing some files? :^)'
+            nothing_label = 'You have yet to board the ride.'
             
             nothing_st = ClientGUICommon.BetterStaticText( self, label = nothing_label )
             
@@ -1900,22 +2310,35 @@ class ReviewHowBonedAmI( ClientGUIScrolledPanels.ReviewPanel ):
             
         else:
             
-            num_archive_percent = float( num_archive ) / num_total
-            size_archive_percent = float( size_archive ) / size_total
+            num_archive_percent = num_archive / num_total
+            size_archive_percent = size_archive / size_total
             
-            num_inbox_percent = float( num_inbox ) / num_total
-            size_inbox_percent = float( size_inbox ) / size_total
+            num_inbox_percent = num_inbox / num_total
+            size_inbox_percent = size_inbox / size_total
             
-            archive_label = 'Archive: ' + HydrusData.ToHumanInt( num_archive ) + ' files (' + ClientData.ConvertZoomToPercentage( num_archive_percent ) + '), totalling ' + HydrusData.ConvertIntToBytes( size_archive ) + '(' + ClientData.ConvertZoomToPercentage( size_archive_percent ) + ')'
+            archive_label = 'Archive: ' + HydrusData.ToHumanInt( num_archive ) + ' files (' + ClientData.ConvertZoomToPercentage( num_archive_percent ) + '), totalling ' + HydrusData.ToHumanBytes( size_archive ) + '(' + ClientData.ConvertZoomToPercentage( size_archive_percent ) + ')'
             
             archive_st = ClientGUICommon.BetterStaticText( self, label = archive_label )
             
-            inbox_label = 'Inbox: ' + HydrusData.ToHumanInt( num_inbox ) + ' files (' + ClientData.ConvertZoomToPercentage( num_inbox_percent ) + '), totalling ' + HydrusData.ConvertIntToBytes( size_inbox ) + '(' + ClientData.ConvertZoomToPercentage( size_inbox_percent ) + ')'
+            inbox_label = 'Inbox: ' + HydrusData.ToHumanInt( num_inbox ) + ' files (' + ClientData.ConvertZoomToPercentage( num_inbox_percent ) + '), totalling ' + HydrusData.ToHumanBytes( size_inbox ) + '(' + ClientData.ConvertZoomToPercentage( size_inbox_percent ) + ')'
             
             inbox_st = ClientGUICommon.BetterStaticText( self, label = inbox_label )
             
             vbox.Add( archive_st, CC.FLAGS_CENTER )
             vbox.Add( inbox_st, CC.FLAGS_CENTER )
+            
+            ( media_views, media_viewtime, preview_views, preview_viewtime ) = total_viewtime
+            
+            media_label = 'Total media views: ' + HydrusData.ToHumanInt( media_views ) + ', totalling ' + HydrusData.TimeDeltaToPrettyTimeDelta( media_viewtime )
+            
+            media_st = ClientGUICommon.BetterStaticText( self, label = media_label )
+            
+            preview_label = 'Total preview views: ' + HydrusData.ToHumanInt( preview_views ) + ', totalling ' + HydrusData.TimeDeltaToPrettyTimeDelta( preview_viewtime )
+            
+            preview_st = ClientGUICommon.BetterStaticText( self, label = preview_label )
+            
+            vbox.Add( media_st, CC.FLAGS_CENTER )
+            vbox.Add( preview_st, CC.FLAGS_CENTER )
             
         
         self.SetSizer( vbox )
@@ -1942,7 +2365,7 @@ class ReviewNetworkContextBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         description = CC.network_context_type_description_lookup[ self._network_context.context_type ]
         
-        self._name = ClientGUICommon.BetterStaticText( info_panel, label = self._network_context.ToUnicode() )
+        self._name = ClientGUICommon.BetterStaticText( info_panel, label = self._network_context.ToString() )
         self._description = ClientGUICommon.BetterStaticText( info_panel, label = description )
         
         #
@@ -2043,7 +2466,7 @@ class ReviewNetworkContextBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _EditRules( self ):
         
-        with ClientGUITopLevelWindows.DialogEdit( self, 'edit bandwidth rules for ' + self._network_context.ToUnicode() ) as dlg:
+        with ClientGUITopLevelWindows.DialogEdit( self, 'edit bandwidth rules for ' + self._network_context.ToString() ) as dlg:
             
             summary = self._network_context.GetSummary()
             
@@ -2066,7 +2489,7 @@ class ReviewNetworkContextBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         current_usage = self._bandwidth_tracker.GetUsage( HC.BANDWIDTH_TYPE_DATA, 1, for_user = True )
         
-        pretty_current_usage = 'current usage: ' + HydrusData.ConvertIntToBytes( current_usage ) + '/s'
+        pretty_current_usage = 'current usage: ' + HydrusData.ToHumanBytes( current_usage ) + '/s'
         
         self._current_usage_st.SetLabelText( pretty_current_usage )
         
@@ -2079,7 +2502,7 @@ class ReviewNetworkContextBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         if bandwidth_type == HC.BANDWIDTH_TYPE_DATA:
             
-            converter = HydrusData.ConvertIntToBytes
+            converter = HydrusData.ToHumanBytes
             
         elif bandwidth_type == HC.BANDWIDTH_TYPE_REQUESTS:
             
@@ -2227,7 +2650,7 @@ class ReviewNetworkJobs( ClientGUIScrolledPanels.ReviewPanel ):
         pretty_position = ClientNetworking.job_status_str_lookup[ position ]
         pretty_url = url
         pretty_status = status
-        pretty_current_speed = HydrusData.ConvertIntToBytes( current_speed ) + '/s'
+        pretty_current_speed = HydrusData.ToHumanBytes( current_speed ) + '/s'
         pretty_progress = HydrusData.ConvertValueRangeToBytes( num_bytes_read, num_bytes_to_read )
         
         display_tuple = ( pretty_position, pretty_url, pretty_status, pretty_current_speed, pretty_progress )
@@ -2262,11 +2685,15 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
         listctrl_panel.SetListCtrl( self._listctrl )
         
         listctrl_panel.AddButton( 'create new', self._Add )
-        listctrl_panel.AddButton( 'import cookies.txt', self._ImportCookiesTXT )
+        listctrl_panel.AddButton( 'import cookies.txt (drag and drop also works!)', self._ImportCookiesTXT )
         listctrl_panel.AddButton( 'review', self._Review, enabled_only_on_selection = True )
         listctrl_panel.AddButton( 'clear', self._Clear, enabled_only_on_selection = True )
         listctrl_panel.AddSeparator()
         listctrl_panel.AddButton( 'refresh', self._Update )
+        
+        listctrl_panel.SetDropTarget( ClientDragDrop.FileDropTarget( self, filenames_callable = self._ImportCookiesTXTPaths ) )
+        
+        self._show_empty = wx.CheckBox( self, label = 'show empty' )
         
         #
         
@@ -2277,8 +2704,11 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
         vbox = wx.BoxSizer( wx.VERTICAL )
         
         vbox.Add( listctrl_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
+        vbox.Add( self._show_empty, CC.FLAGS_LONE_BUTTON )
         
         self.SetSizer( vbox )
+        
+        self._show_empty.Bind( wx.EVT_CHECKBOX, self.EventShowEmpty )
         
     
     def _Add( self ):
@@ -2299,6 +2729,8 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
                 
             
         
+        self._show_empty.SetValue( True )
+        
         self._Update()
         
     
@@ -2311,11 +2743,17 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _Clear( self ):
         
+        with ClientGUIDialogs.DialogYesNo( self, 'Clear these sessions? This will delete them completely.' ) as dlg:
+            
+            if dlg.ShowModal() != wx.ID_YES:
+                
+                return
+                
+            
+        
         for network_context in self._listctrl.GetData( only_selected = True ):
             
             self._session_manager.ClearSession( network_context )
-            
-            self._AddNetworkContext( network_context )
             
         
         self._Update()
@@ -2325,7 +2763,7 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         session = self._session_manager.GetSession( network_context )
         
-        pretty_network_context = network_context.ToUnicode()
+        pretty_network_context = network_context.ToString()
         
         number_of_cookies = len( session.cookies )
         pretty_number_of_cookies = HydrusData.ToHumanInt( number_of_cookies )
@@ -2347,8 +2785,16 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
         else:
             
-            expiry = max( expires_numbers )
-            pretty_expiry = HydrusData.ConvertTimestampToPrettyExpires( expiry )
+            try:
+                
+                expiry = max( expires_numbers )
+                pretty_expiry = HydrusData.ConvertTimestampToPrettyExpires( expiry )
+                
+            except:
+                
+                expiry = -1
+                pretty_expiry = 'Unusual expiry numbers'
+                
             
         
         display_tuple = ( pretty_network_context, pretty_number_of_cookies, pretty_expiry )
@@ -2364,20 +2810,45 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             if f_dlg.ShowModal() == wx.ID_OK:
                 
-                path = HydrusData.ToUnicode( f_dlg.GetPath() )
+                path = f_dlg.GetPath()
                 
-                cj = cookielib.MozillaCookieJar()
+                self._ImportCookiesTXTPaths( ( path, ) )
+                
+            
+        
+    
+    def _ImportCookiesTXTPaths( self, paths ):
+        
+        num_added = 0
+        
+        for path in paths:
+            
+            cj = http.cookiejar.MozillaCookieJar()
+            
+            try:
                 
                 cj.load( path, ignore_discard = True, ignore_expires = True )
                 
-                for cookie in cj:
-                    
-                    session = self._session_manager.GetSessionForDomain( cookie.domain )
-                    
-                    session.cookies.set_cookie( cookie )
-                    
+            except Exception as e:
+                
+                HydrusData.ShowException( e )
+                
+                wx.MessageBox( 'It looks like that cookies.txt failed to load. Unfortunately, not all formats are supported (for now!).' )
+                
+                return
                 
             
+            for cookie in cj:
+                
+                session = self._session_manager.GetSessionForDomain( cookie.domain )
+                
+                session.cookies.set_cookie( cookie )
+                
+                num_added += 1
+                
+            
+        
+        wx.MessageBox( 'Added ' + HydrusData.ToHumanInt( num_added ) + ' cookies!' )
         
         self._Update()
         
@@ -2388,7 +2859,7 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             parent = self.GetTopLevelParent().GetParent()
             
-            frame = ClientGUITopLevelWindows.FrameThatTakesScrollablePanel( parent, 'review session for ' + network_context.ToUnicode() )
+            frame = ClientGUITopLevelWindows.FrameThatTakesScrollablePanel( parent, 'review session for ' + network_context.ToString() )
             
             panel = ReviewNetworkSessionPanel( frame, self._session_manager, network_context )
             
@@ -2400,7 +2871,29 @@ class ReviewNetworkSessionsPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         network_contexts = [ network_context for network_context in self._session_manager.GetNetworkContexts() if network_context.context_type in ( CC.NETWORK_CONTEXT_DOMAIN, CC.NETWORK_CONTEXT_HYDRUS ) ]
         
+        if not self._show_empty.GetValue():
+            
+            non_empty_network_contexts = []
+            
+            for network_context in network_contexts:
+                
+                session = self._session_manager.GetSession( network_context )
+                
+                if len( session.cookies ) > 0:
+                    
+                    non_empty_network_contexts.append( network_context )
+                    
+                
+            
+            network_contexts = non_empty_network_contexts
+            
+        
         self._listctrl.SetData( network_contexts )
+        
+    
+    def EventShowEmpty( self, event ):
+        
+        self._Update()
         
     
 class ReviewNetworkSessionPanel( ClientGUIScrolledPanels.ReviewPanel ):
@@ -2414,7 +2907,7 @@ class ReviewNetworkSessionPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         self._session = self._session_manager.GetSession( self._network_context )
         
-        self._description = ClientGUICommon.BetterStaticText( self, network_context.ToUnicode() )
+        self._description = ClientGUICommon.BetterStaticText( self, network_context.ToString() )
         
         listctrl_panel = ClientGUIListCtrl.BetterListCtrlPanel( self )
         
@@ -2427,11 +2920,13 @@ class ReviewNetworkSessionPanel( ClientGUIScrolledPanels.ReviewPanel ):
         listctrl_panel.SetListCtrl( self._listctrl )
         
         listctrl_panel.AddButton( 'add', self._Add )
-        listctrl_panel.AddButton( 'import cookies.txt', self._ImportCookiesTXT )
+        listctrl_panel.AddButton( 'import cookies.txt (drag and drop also works!)', self._ImportCookiesTXT )
         listctrl_panel.AddButton( 'edit', self._Edit, enabled_only_on_selection = True )
         listctrl_panel.AddDeleteButton()
         listctrl_panel.AddSeparator()
         listctrl_panel.AddButton( 'refresh', self._Update )
+        
+        listctrl_panel.SetDropTarget( ClientDragDrop.FileDropTarget( self, filenames_callable = self._ImportCookiesTXTPaths ) )
         
         #
         
@@ -2499,7 +2994,6 @@ class ReviewNetworkSessionPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         if expiry is None:
             
-            expiry = -1
             pretty_expiry = 'session'
             
         else:
@@ -2507,8 +3001,10 @@ class ReviewNetworkSessionPanel( ClientGUIScrolledPanels.ReviewPanel ):
             pretty_expiry = HydrusData.ConvertTimestampToPrettyExpires( expiry )
             
         
+        sort_expiry = ClientGUIListCtrl.SafeNoneInt( expiry )
+        
         display_tuple = ( pretty_name, pretty_value, pretty_domain, pretty_path, pretty_expiry )
-        sort_tuple = ( name, value, domain, path, expiry )
+        sort_tuple = ( name, value, domain, path, sort_expiry )
         
         return ( display_tuple, sort_tuple )
         
@@ -2565,29 +3061,54 @@ class ReviewNetworkSessionPanel( ClientGUIScrolledPanels.ReviewPanel ):
         self._Update()
         
     
-    # this method is thanks to user prkc on the discord!
+    # these methods are thanks to user prkc on the discord!
     def _ImportCookiesTXT( self ):
         
         with wx.FileDialog( self, 'select cookies.txt', style = wx.FD_OPEN ) as f_dlg:
             
             if f_dlg.ShowModal() == wx.ID_OK:
                 
-                path = HydrusData.ToUnicode( f_dlg.GetPath() )
+                path = f_dlg.GetPath()
                 
-                cj = cookielib.MozillaCookieJar()
-                
-                cj.load( path, ignore_discard = True, ignore_expires = True )
-                
-                for cookie in cj:
-                    
-                    self._session.cookies.set_cookie( cookie )
-                    
+                self._ImportCookiesTXTPaths( ( path, ) )
                 
             
         
+    
+    def _ImportCookiesTXTPaths( self, paths ):
+        
+        num_added = 0
+        
+        for path in paths:
+            
+            cj = http.cookiejar.MozillaCookieJar()
+            
+            try:
+                
+                cj.load( path, ignore_discard = True, ignore_expires = True )
+                
+            except Exception as e:
+                
+                HydrusData.ShowException( e )
+                
+                wx.MessageBox( 'It looks like that cookies.txt failed to load. Unfortunately, not all formats are supported (for now!).' )
+                
+                return
+                
+            
+            for cookie in cj:
+                
+                self._session.cookies.set_cookie( cookie )
+                
+                num_added += 1
+                
+            
+        
+        wx.MessageBox( 'Added ' + HydrusData.ToHumanInt( num_added ) + ' cookies!' )
+        
         self._Update()
         
-
+    
     def _SetCookie( self, name, value, domain, path, expires ):
         
         version = 0
@@ -2602,7 +3123,7 @@ class ReviewNetworkSessionPanel( ClientGUIScrolledPanels.ReviewPanel ):
         comment_url = None
         rest = {}
         
-        cookie = cookielib.Cookie( version, name, value, port, port_specified, domain, domain_specified, domain_initial_dot, path, path_specified, secure, expires, discard, comment, comment_url, rest )
+        cookie = http.cookiejar.Cookie( version, name, value, port, port_specified, domain, domain_specified, domain_initial_dot, path, path_specified, secure, expires, discard, comment, comment_url, rest )
         
         self._session.cookies.set_cookie( cookie )
         
@@ -2624,13 +3145,13 @@ class ReviewServicesPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         ClientGUIScrolledPanels.ReviewPanel.__init__( self, parent )
         
-        self._notebook = wx.Notebook( self )
+        self._notebook = ClientGUICommon.BetterNotebook( self )
         
-        self._local_listbook = ClientGUICommon.ListBook( self._notebook )
-        self._remote_listbook = ClientGUICommon.ListBook( self._notebook )
+        self._local_notebook = ClientGUICommon.BetterNotebook( self._notebook )
+        self._remote_notebook = ClientGUICommon.BetterNotebook( self._notebook )
         
-        self._notebook.AddPage( self._local_listbook, 'local' )
-        self._notebook.AddPage( self._remote_listbook, 'remote' )
+        self._notebook.AddPage( self._local_notebook, 'local' )
+        self._notebook.AddPage( self._remote_notebook, 'remote' )
         
         self._InitialiseServices()
         
@@ -2660,24 +3181,22 @@ class ReviewServicesPanel( ClientGUIScrolledPanels.ReviewPanel ):
             previous_service_key = page.GetServiceKey()
             
         
-        self._local_listbook.DeleteAllPages()
-        self._remote_listbook.DeleteAllPages()
+        self._local_notebook.DeleteAllPages()
+        self._remote_notebook.DeleteAllPages()
         
-        listbook_dict = {}
+        notebook_dict = {}
         
         services = self._controller.services_manager.GetServices( randomised = False )
         
-        lb_to_select = None
-        service_type_name_to_select = None
+        local_remote_notebook_to_select = None
         service_type_lb = None
-        service_name_to_select = None
         
         for service in services:
             
             service_type = service.GetServiceType()
             
-            if service_type in HC.LOCAL_SERVICES: parent_listbook = self._local_listbook
-            else: parent_listbook = self._remote_listbook
+            if service_type in HC.LOCAL_SERVICES: parent_notebook = self._local_notebook
+            else: parent_notebook = self._remote_notebook
             
             if service_type == HC.TAG_REPOSITORY: service_type_name = 'tag repositories'
             elif service_type == HC.FILE_REPOSITORY: service_type_name = 'file repositories'
@@ -2688,54 +3207,38 @@ class ReviewServicesPanel( ClientGUIScrolledPanels.ReviewPanel ):
             elif service_type == HC.LOCAL_RATING_LIKE: service_type_name = 'like/dislike ratings'
             elif service_type == HC.LOCAL_RATING_NUMERICAL: service_type_name = 'numerical ratings'
             elif service_type == HC.LOCAL_BOORU: service_type_name = 'booru'
+            elif service_type == HC.CLIENT_API_SERVICE: service_type_name = 'client api'
             elif service_type == HC.IPFS: service_type_name = 'ipfs'
             else: continue
             
-            if service_type_name not in listbook_dict:
+            if service_type_name not in notebook_dict:
                 
-                listbook = ClientGUICommon.ListBook( parent_listbook )
+                services_notebook = ClientGUICommon.BetterNotebook( parent_notebook )
                 
-                listbook_dict[ service_type_name ] = listbook
+                notebook_dict[ service_type_name ] = services_notebook
                 
-                parent_listbook.AddPage( service_type_name, service_type_name, listbook )
+                parent_notebook.AddPage( services_notebook, service_type_name, select = False )
                 
             
-            listbook = listbook_dict[ service_type_name ]
+            services_notebook = notebook_dict[ service_type_name ]
             
-            name = service.GetName()
-            
-            panel_class = ClientGUIPanels.ReviewServicePanel
-            
-            listbook.AddPageArgs( name, name, panel_class, ( listbook, service ), {} )
+            page = ClientGUIPanels.ReviewServicePanel( services_notebook, service )
             
             if service.GetServiceKey() == previous_service_key:
                 
-                lb_to_select = parent_listbook
-                service_type_name_to_select = service_name_to_select
-                service_type_lb = listbook
-                name_to_select = name
+                self._notebook.SelectPage( parent_notebook )
+                parent_notebook.SelectPage( services_notebook )
+                
+                select = True
+                
+            else:
+                
+                select = False
                 
             
-        
-        if lb_to_select is not None:
+            name = service.GetName()
             
-            if self._notebook.GetCurrentPage() != lb_to_select:
-                
-                selection = self._notebook.GetSelection()
-                
-                if selection == 0:
-                    
-                    self._notebook.SetSelection( 1 )
-                    
-                else:
-                    
-                    self._notebook.SetSelection( 0 )
-                    
-                
-            
-            lb_to_select.Select( service_name_to_select )
-            
-            service_type_lb.Select( name_to_select )
+            services_notebook.AddPage( page, name, select = select )
             
         
     

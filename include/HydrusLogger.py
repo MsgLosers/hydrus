@@ -1,5 +1,5 @@
-import HydrusConstants as HC
-import HydrusData
+from . import HydrusConstants as HC
+from . import HydrusData
 import os
 import sys
 import threading
@@ -7,10 +7,15 @@ import time
 
 class HydrusLogger( object ):
     
-    def __init__( self, base_dir, prefix ):
+    def __init__( self, db_dir, prefix ):
         
-        self._log_path_base = os.path.join( base_dir, prefix )
+        self._db_dir = db_dir
+        self._prefix = prefix
+        
+        self._log_path_base = self._GetLogPathBase()
         self._lock = threading.Lock()
+        
+        self._log_closed = False
         
     
     def __enter__( self ):
@@ -30,10 +35,12 @@ class HydrusLogger( object ):
     
     def __exit__( self, exc_type, exc_val, exc_tb ):
         
-        sys.stdout = self._previous_sys_stdout
-        sys.stderr = self._previous_sys_stderr
+        #sys.stdout = self._previous_sys_stdout
+        #sys.stderr = self._previous_sys_stderr
         
         self._CloseLog()
+        
+        self._log_closed = True
         
         return False
         
@@ -54,11 +61,23 @@ class HydrusLogger( object ):
         return log_path
         
     
+    def _GetLogPathBase( self ):
+        
+        return os.path.join( self._db_dir, self._prefix )
+        
+    
     def _OpenLog( self ):
         
         self._log_path = self._GetLogPath()
         
-        self._log_file = open( self._log_path, 'a' )
+        is_new_file = not os.path.exists( self._log_path )
+        
+        self._log_file = open( self._log_path, 'a', encoding = 'utf-8' )
+        
+        if is_new_file:
+            
+            self._log_file.write( u'\uFEFF' ) # Byte Order Mark, BOM, to help reader software interpret this as utf-8
+            
         
     
     def _SwitchToANewLogFileIfDue( self ):
@@ -74,6 +93,11 @@ class HydrusLogger( object ):
         
     
     def flush( self ):
+        
+        if self._log_closed:
+            
+            return
+            
         
         with self._lock:
             
@@ -102,6 +126,11 @@ class HydrusLogger( object ):
     
     def write( self, value ):
         
+        if self._log_closed:
+            
+            return
+            
+        
         with self._lock:
             
             if value in ( os.linesep, '\n' ):
@@ -117,21 +146,17 @@ class HydrusLogger( object ):
             
             if not self._problem_with_previous_stdout:
                 
-                stdout_message = HydrusData.ToByteString( message.replace( u'\u2026', '...' ) )
-                
                 try:
                     
-                    self._previous_sys_stdout.write( stdout_message )
+                    self._previous_sys_stdout.write( message )
                     
-                except IOError:
+                except:
                     
                     self._problem_with_previous_stdout = True
                     
                 
             
-            log_message = HydrusData.ToByteString( message )
-            
-            self._log_file.write( log_message )
+            self._log_file.write( message )
             
         
     

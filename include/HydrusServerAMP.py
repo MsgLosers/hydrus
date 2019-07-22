@@ -1,28 +1,27 @@
 import collections
-import HydrusConstants as HC
-import HydrusDocumentHandling
-import HydrusExceptions
-import HydrusFileHandling
-import HydrusFlashHandling
-import HydrusImageHandling
-import HydrusServerResources
+from . import HydrusConstants as HC
+from . import HydrusDocumentHandling
+from . import HydrusExceptions
+from . import HydrusFileHandling
+from . import HydrusFlashHandling
+from . import HydrusImageHandling
+from . import HydrusServerResources
 import os
 import random
-import ServerFiles
+from . import ServerFiles
 import traceback
-import urllib
 from twisted.internet import reactor, defer
 from twisted.internet.threads import deferToThread
 from twisted.protocols import amp
-import HydrusData
-import HydrusGlobals as HG
+from . import HydrusData
+from . import HydrusGlobals as HG
 '''
 class HydrusAMPCommand( amp.Command ):
     errors = {}
-    errors[ HydrusExceptions.ForbiddenException ] = 'FORBIDDEN'
+    errors[ HydrusExceptions.InsufficientCredentialsException ] = 'FORBIDDEN'
     errors[ HydrusExceptions.NetworkVersionException ] = 'NETWORK_VERSION'
     errors[ HydrusExceptions.NotFoundException ] = 'NOT_FOUND'
-    errors[ HydrusExceptions.PermissionException ] = 'PERMISSION'
+    errors[ HydrusExceptions.MissingCredentialsException ] = 'PERMISSION'
     errors[ HydrusExceptions.SessionException ] = 'SESSION'
     errors[ Exception ] = 'EXCEPTION'
     
@@ -59,10 +58,10 @@ class HydrusAMP( amp.AMP ):
         
         normal_errors = []
         
-        normal_errors.append( HydrusExceptions.ForbiddenException )
+        normal_errors.append( HydrusExceptions.InsufficientCredentialsException )
         normal_errors.append( HydrusExceptions.NetworkVersionException )
         normal_errors.append( HydrusExceptions.NotFoundException )
-        normal_errors.append( HydrusExceptions.PermissionException )
+        normal_errors.append( HydrusExceptions.MissingCredentialsException )
         normal_errors.append( HydrusExceptions.SessionException )
         
         if failure.type in normal_errors: failure.raiseException()

@@ -1,37 +1,39 @@
-import HydrusConstants as HC
-import HydrusExceptions
-import HydrusSerialisable
-import ClientConstants as CC
-import ClientDefaults
-import ClientGUIACDropdown
-import ClientGUICanvas
-import ClientGUICommon
-import ClientGUIControls
-import ClientGUIDialogs
-import ClientGUIImport
-import ClientGUIListBoxes
-import ClientGUIListCtrl
-import ClientGUIMedia
-import ClientGUIMenus
-import ClientGUIParsing
-import ClientGUIScrolledPanels
-import ClientGUIFileSeedCache
-import ClientGUIGallerySeedLog
-import ClientGUIScrolledPanelsEdit
-import ClientGUITopLevelWindows
-import ClientImportGallery
-import ClientImportLocal
-import ClientImportOptions
-import ClientImportSimpleURLs
-import ClientImportWatchers
-import ClientMedia
-import ClientParsing
-import ClientPaths
-import ClientThreading
-import HydrusData
-import HydrusGlobals as HG
-import HydrusThreading
-import multipart
+from . import HydrusConstants as HC
+from . import HydrusExceptions
+from . import HydrusSerialisable
+from . import ClientConstants as CC
+from . import ClientDefaults
+from . import ClientGUIACDropdown
+from . import ClientGUICanvas
+from . import ClientGUICommon
+from . import ClientGUIControls
+from . import ClientGUIDialogs
+from . import ClientGUIFunctions
+from . import ClientGUIImport
+from . import ClientGUIListBoxes
+from . import ClientGUIListCtrl
+from . import ClientGUIMedia
+from . import ClientGUIMenus
+from . import ClientGUIParsing
+from . import ClientGUIScrolledPanels
+from . import ClientGUIFileSeedCache
+from . import ClientGUIGallerySeedLog
+from . import ClientGUIScrolledPanelsEdit
+from . import ClientGUITopLevelWindows
+from . import ClientImportGallery
+from . import ClientImportLocal
+from . import ClientImportOptions
+from . import ClientImportSimpleURLs
+from . import ClientImportWatchers
+from . import ClientMedia
+from . import ClientParsing
+from . import ClientPaths
+from . import ClientSearch
+from . import ClientTags
+from . import ClientThreading
+from . import HydrusData
+from . import HydrusGlobals as HG
+from . import HydrusThreading
 import os
 import time
 import traceback
@@ -54,6 +56,7 @@ MANAGEMENT_TYPE_QUERY = 6
 MANAGEMENT_TYPE_IMPORT_URLS = 7
 MANAGEMENT_TYPE_DUPLICATE_FILTER = 8
 MANAGEMENT_TYPE_IMPORT_MULTIPLE_WATCHER = 9
+MANAGEMENT_TYPE_PAGE_OF_PAGES = 10
 
 management_panel_types_to_classes = {}
 
@@ -72,13 +75,25 @@ def CreateManagementController( page_name, management_type, file_service_key = N
     management_controller.SetKey( 'file_service', file_service_key )
     management_controller.SetVariable( 'media_sort', new_options.GetDefaultSort() )
     
+    collect_by = HC.options[ 'default_collect' ]
+    
+    if collect_by is None:
+        
+        collect_by = []
+        
+    
+    management_controller.SetVariable( 'media_collect', collect_by )
+    
     return management_controller
     
 def CreateManagementControllerDuplicateFilter():
     
     management_controller = CreateManagementController( 'duplicates', MANAGEMENT_TYPE_DUPLICATE_FILTER )
     
-    management_controller.SetKey( 'duplicate_filter_file_domain', CC.LOCAL_FILE_SERVICE_KEY )
+    file_search_context = ClientSearch.FileSearchContext( file_service_key = CC.LOCAL_FILE_SERVICE_KEY, predicates = [ ClientSearch.Predicate( HC.PREDICATE_TYPE_SYSTEM_EVERYTHING ) ] )
+    
+    management_controller.SetVariable( 'file_search_context', file_search_context )
+    management_controller.SetVariable( 'both_files_match', False )
     
     return management_controller
     
@@ -110,19 +125,24 @@ def CreateManagementControllerImportSimpleDownloader():
     
     return management_controller
     
-def CreateManagementControllerImportHDD( paths, file_import_options, paths_to_tags, delete_after_success ):
+def CreateManagementControllerImportHDD( paths, file_import_options, paths_to_service_keys_to_tags, delete_after_success ):
     
     management_controller = CreateManagementController( 'import', MANAGEMENT_TYPE_IMPORT_HDD )
     
-    hdd_import = ClientImportLocal.HDDImport( paths = paths, file_import_options = file_import_options, paths_to_tags = paths_to_tags, delete_after_success = delete_after_success )
+    hdd_import = ClientImportLocal.HDDImport( paths = paths, file_import_options = file_import_options, paths_to_service_keys_to_tags = paths_to_service_keys_to_tags, delete_after_success = delete_after_success )
     
     management_controller.SetVariable( 'hdd_import', hdd_import )
     
     return management_controller
     
-def CreateManagementControllerImportMultipleWatcher( url = None ):
+def CreateManagementControllerImportMultipleWatcher( page_name = None, url = None ):
     
-    management_controller = CreateManagementController( 'watcher', MANAGEMENT_TYPE_IMPORT_MULTIPLE_WATCHER )
+    if page_name is None:
+        
+        page_name = 'watcher'
+        
+    
+    management_controller = CreateManagementController( page_name, MANAGEMENT_TYPE_IMPORT_MULTIPLE_WATCHER )
     
     multiple_watcher_import = ClientImportWatchers.MultipleWatcherImport( url = url )
     
@@ -130,9 +150,14 @@ def CreateManagementControllerImportMultipleWatcher( url = None ):
     
     return management_controller
     
-def CreateManagementControllerImportURLs():
+def CreateManagementControllerImportURLs( page_name = None ):
     
-    management_controller = CreateManagementController( 'url import', MANAGEMENT_TYPE_IMPORT_URLS )
+    if page_name is None:
+        
+        page_name = 'url import'
+        
+    
+    management_controller = CreateManagementController( page_name, MANAGEMENT_TYPE_IMPORT_URLS )
     
     urls_import = ClientImportSimpleURLs.URLsImport()
     
@@ -183,38 +208,6 @@ def CreateManagementPanel( parent, page, controller, management_controller ):
     
     return management_panel
     
-def GenerateDumpMultipartFormDataCTAndBody( fields ):
-    
-    m = multipart.Multipart()
-    
-    for ( name, field_type, value ) in fields:
-        
-        if field_type in ( CC.FIELD_TEXT, CC.FIELD_COMMENT, CC.FIELD_PASSWORD, CC.FIELD_VERIFICATION_RECAPTCHA, CC.FIELD_THREAD_ID ):
-            
-            m.field( name, HydrusData.ToByteString( value ) )
-            
-        elif field_type == CC.FIELD_CHECKBOX:
-            
-            if value:
-                
-                # spoiler/on -> name : spoiler, value : on
-                # we don't say true/false for checkboxes
-                
-                ( name, value ) = name.split( '/', 1 )
-                
-                m.field( name, value )
-                
-            
-        elif field_type == CC.FIELD_FILE:
-            
-            ( hash, mime, file ) = value
-            
-            m.file( name, hash.encode( 'hex' ) + HC.mime_ext_lookup[ mime ], file, { 'Content-Type' : HC.mime_string_lookup[ mime ] } )
-            
-        
-    
-    return m.get()
-    
 '''class CaptchaControl( wx.Panel ):
     
     def __init__( self, parent, captcha_type, default ):
@@ -225,7 +218,7 @@ def GenerateDumpMultipartFormDataCTAndBody( fields ):
         
         self._captcha_challenge = None
         self._captcha_runs_out = 0
-        self._bitmap = wx.Bitmap( 20, 20, 24 )
+        self._bitmap = HG.client_controller.bitmap_manager.GetBitmap( 20, 20, 24 )
         
         self._timer = wx.Timer( self, ID_TIMER_CAPTCHA )
         self.Bind( wx.EVT_TIMER, self.TIMEREvent, id = ID_TIMER_CAPTCHA )
@@ -321,7 +314,7 @@ def GenerateDumpMultipartFormDataCTAndBody( fields ):
             
             dc.DrawBitmap( wx_bmp, 0, 0 )
             
-            wx_bmp.Destroy()
+            HG.client_controller.bitmap_manager.ReleaseBitmap( wx_bmp )
             
             self._refresh_button.SetLabelText( 'get new captcha' )
             self._refresh_button.Enable()
@@ -360,7 +353,7 @@ def GenerateDumpMultipartFormDataCTAndBody( fields ):
         
         self._captcha_challenge = None
         self._captcha_runs_out = 0
-        self._bitmap = wx.Bitmap( 20, 20, 24 )
+        self._bitmap = HG.client_controller.bitmap_manager.GetBitmap( 20, 20, 24 )
         
         self._DrawMain()
         self._DrawEntry()
@@ -373,7 +366,7 @@ def GenerateDumpMultipartFormDataCTAndBody( fields ):
         
         self._captcha_challenge = ''
         self._captcha_runs_out = 0
-        self._bitmap = wx.Bitmap( 20, 20, 24 )
+        self._bitmap = HG.client_controller.bitmap_manager.GetBitmap( 20, 20, 24 )
         
         self._DrawMain()
         self._DrawEntry()
@@ -419,7 +412,7 @@ def GenerateDumpMultipartFormDataCTAndBody( fields ):
         
         jpeg = self._controller.DoHTTP( HC.GET, 'https://www.google.com/recaptcha/api/image?c=' + self._captcha_challenge )
         
-        ( os_file_handle, temp_path ) = ClientPaths.GetTempPath()
+        ( os_file_handle, temp_path ) = HydrusPaths.GetTempPath()
         
         try:
             
@@ -534,7 +527,7 @@ class ManagementController( HydrusSerialisable.SerialisableBase ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_MANAGEMENT_CONTROLLER
     SERIALISABLE_NAME = 'Client Page Management Controller'
-    SERIALISABLE_VERSION = 7
+    SERIALISABLE_VERSION = 9
     
     def __init__( self, page_name = 'page' ):
         
@@ -551,16 +544,16 @@ class ManagementController( HydrusSerialisable.SerialisableBase ):
     
     def __repr__( self ):
         
-        return HydrusData.ToByteString( 'Management Controller: ' + self._management_type + ' - ' + self._page_name )
+        return 'Management Controller: {} - {}'.format( self._management_type, self._page_name )
         
     
     def _GetSerialisableInfo( self ):
         
-        serialisable_keys = { name : value.encode( 'hex' ) for ( name, value ) in self._keys.items() }
+        serialisable_keys = { name : value.hex() for ( name, value ) in list(self._keys.items()) }
         
         serialisable_simples = dict( self._simples )
         
-        serialisable_serialisables = { name : value.GetSerialisableTuple() for ( name, value ) in self._serialisables.items() }
+        serialisable_serialisables = { name : value.GetSerialisableTuple() for ( name, value ) in list(self._serialisables.items()) }
         
         return ( self._page_name, self._management_type, serialisable_keys, serialisable_simples, serialisable_serialisables )
         
@@ -569,11 +562,6 @@ class ManagementController( HydrusSerialisable.SerialisableBase ):
         
         self._serialisables[ 'media_sort' ] = ClientMedia.MediaSort( ( 'system', CC.SORT_FILES_BY_FILESIZE ), CC.SORT_ASC )
         
-        if self._management_type == MANAGEMENT_TYPE_DUPLICATE_FILTER:
-            
-            self._keys[ 'duplicate_filter_file_domain' ] = CC.LOCAL_FILE_SERVICE_KEY
-            
-        
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
@@ -581,7 +569,7 @@ class ManagementController( HydrusSerialisable.SerialisableBase ):
         
         self._InitialiseDefaults()
         
-        self._keys.update( { name : key.decode( 'hex' ) for ( name, key ) in serialisable_keys.items() } )
+        self._keys.update( { name : bytes.fromhex( key ) for ( name, key ) in list(serialisable_keys.items()) } )
         
         if 'file_service' in self._keys:
             
@@ -593,7 +581,7 @@ class ManagementController( HydrusSerialisable.SerialisableBase ):
         
         self._simples.update( dict( serialisable_simples ) )
         
-        self._serialisables.update( { name : HydrusSerialisable.CreateFromSerialisableTuple( value ) for ( name, value ) in serialisable_serialisables.items() } )
+        self._serialisables.update( { name : HydrusSerialisable.CreateFromSerialisableTuple( value ) for ( name, value ) in list(serialisable_serialisables.items()) } )
         
     
     def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
@@ -629,9 +617,9 @@ class ManagementController( HydrusSerialisable.SerialisableBase ):
                 file_import_options.SetPreImportOptions( exclude_deleted, do_not_check_known_urls_before_importing, do_not_check_hashes_before_importing, allow_decompression_bombs, min_size, max_size, max_gif_size, min_resolution, max_resolution )
                 file_import_options.SetPostImportOptions( automatic_archive, associate_source_urls )
                 
-                paths_to_tags = { path : { service_key.decode( 'hex' ) : tags for ( service_key, tags ) in service_keys_to_tags } for ( path, service_keys_to_tags ) in paths_to_tags.items() }
+                paths_to_tags = { path : { bytes.fromhex( service_key ) : tags for ( service_key, tags ) in service_keys_to_tags } for ( path, service_keys_to_tags ) in list(paths_to_tags.items()) }
                 
-                hdd_import = ClientImportLocal.HDDImport( paths = paths, file_import_options = file_import_options, paths_to_tags = paths_to_tags, delete_after_success = delete_after_success )
+                hdd_import = ClientImportLocal.HDDImport( paths = paths, file_import_options = file_import_options, paths_to_service_keys_to_tags = paths_to_tags, delete_after_success = delete_after_success )
                 
                 serialisable_serialisables[ 'hdd_import' ] = hdd_import.GetSerialisableTuple()
                 
@@ -729,6 +717,43 @@ class ManagementController( HydrusSerialisable.SerialisableBase ):
             new_serialisable_info = ( page_name, management_type, serialisable_keys, serialisable_simples, serialisable_serialisables )
             
             return ( 7, new_serialisable_info )
+            
+        
+        if version == 7:
+            
+            ( page_name, management_type, serialisable_keys, serialisable_simples, serialisable_serialisables ) = old_serialisable_info
+            
+            if page_name.startswith( '[USER]' ) and len( page_name ) > 6:
+                
+                page_name = page_name[6:]
+                
+            
+            new_serialisable_info = ( page_name, management_type, serialisable_keys, serialisable_simples, serialisable_serialisables )
+            
+            return ( 8, new_serialisable_info )
+            
+        
+        if version == 8:
+            
+            ( page_name, management_type, serialisable_keys, serialisable_simples, serialisable_serialisables ) = old_serialisable_info
+            
+            if management_type == MANAGEMENT_TYPE_DUPLICATE_FILTER:
+                
+                if 'duplicate_filter_file_domain' in serialisable_keys:
+                    
+                    del serialisable_keys[ 'duplicate_filter_file_domain' ]
+                    
+                
+                file_search_context = ClientSearch.FileSearchContext( file_service_key = CC.LOCAL_FILE_SERVICE_KEY, predicates = [ ClientSearch.Predicate( HC.PREDICATE_TYPE_SYSTEM_EVERYTHING ) ] )
+                
+                serialisable_serialisables[ 'file_search_context' ] = file_search_context.GetSerialisableTuple()
+                
+                serialisable_simples[ 'both_files_match' ] = False
+                
+            
+            new_serialisable_info = ( page_name, management_type, serialisable_keys, serialisable_simples, serialisable_serialisables )
+            
+            return ( 9, new_serialisable_info )
             
         
     
@@ -861,7 +886,24 @@ class ManagementPanel( wx.lib.scrolledpanel.ScrolledPanel ):
         
         self._sort_by = ClientGUICommon.ChoiceSort( self, management_controller = self._management_controller )
         
-        self._collect_by = ClientGUICommon.CheckboxCollect( self, self._page_key )
+        self._collect_by = ClientGUICommon.CheckboxCollect( self, management_controller = self._management_controller )
+        
+    
+    def GetCollectBy( self ):
+        
+        if self._collect_by.IsShown():
+            
+            return self._collect_by.GetChoice()
+            
+        else:
+            
+            return []
+            
+        
+    
+    def GetSortBy( self ):
+        
+        return self._sort_by.GetSort()
         
     
     def _MakeCurrentSelectionTagsBox( self, sizer ):
@@ -880,6 +922,11 @@ class ManagementPanel( wx.lib.scrolledpanel.ScrolledPanel ):
         pass
         
     
+    def CleanBeforeClose( self ):
+        
+        pass
+        
+    
     def CleanBeforeDestroy( self ):
         
         pass
@@ -892,7 +939,10 @@ class ManagementPanel( wx.lib.scrolledpanel.ScrolledPanel ):
     
     def PageShown( self ):
         
-        pass
+        if self._controller.new_options.GetBoolean( 'set_search_focus_on_page_change' ):
+            
+            self.SetSearchFocus()
+            
         
     
     def SetSearchFocus( self ):
@@ -910,6 +960,22 @@ class ManagementPanel( wx.lib.scrolledpanel.ScrolledPanel ):
         pass
         
     
+def WaitOnDupeFilterJob( job_key ):
+    
+    while not job_key.IsDone():
+        
+        if HydrusThreading.IsThreadShuttingDown():
+            
+            return
+            
+        
+        time.sleep( 0.25 )
+        
+    
+    time.sleep( 0.5 )
+    
+    HG.client_controller.pub( 'refresh_dupe_page_numbers' )
+    
 class ManagementPanelDuplicateFilter( ManagementPanel ):
     
     def __init__( self, parent, page, controller, management_controller ):
@@ -920,9 +986,27 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         self._job_key = None
         self._in_break = False
         
+        self._similar_files_maintenance_status = None
+        
+        new_options = self._controller.new_options
+        
+        self._currently_refreshing_maintenance_numbers = False
+        self._currently_refreshing_dupe_count_numbers = False
+        
+        #
+        
+        self._main_notebook = ClientGUICommon.BetterNotebook( self )
+        
+        self._main_left_panel = wx.Panel( self._main_notebook )
+        self._main_right_panel = wx.Panel( self._main_notebook )
+        
+        #
+        
+        self._refresh_maintenance_status = ClientGUICommon.BetterStaticText( self._main_left_panel )
+        self._refresh_maintenance_button = ClientGUICommon.BetterBitmapButton( self._main_left_panel, CC.GlobalBMPs.refresh, self._RefreshMaintenanceStatus )
+        
         menu_items = []
         
-        menu_items.append( ( 'normal', 'refresh', 'This panel does not update itself when files are added or deleted elsewhere in the client. Hitting this will refresh the numbers from the database.', self._RefreshAndUpdateStatus ) )
         menu_items.append( ( 'normal', 'reset potential duplicates', 'This will delete all the potential duplicate pairs found so far and reset their files\' search status.', self._ResetUnknown ) )
         menu_items.append( ( 'separator', 0, 0, 0 ) )
         
@@ -930,30 +1014,28 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         menu_items.append( ( 'check', 'search for duplicate pairs at the current distance during normal db maintenance', 'Tell the client to find duplicate pairs in its normal db maintenance cycles, whether you have that set to idle or shutdown time.', check_manager ) )
         
-        self._cog_button = ClientGUICommon.MenuBitmapButton( self, CC.GlobalBMPs.cog, menu_items )
+        self._cog_button = ClientGUICommon.MenuBitmapButton( self._main_left_panel, CC.GlobalBMPs.cog, menu_items )
         
         menu_items = []
         
         page_func = HydrusData.Call( ClientPaths.LaunchPathInWebBrowser, os.path.join( HC.HELP_DIR, 'duplicates.html' ) )
         
-        menu_items.append( ( 'normal', 'show some simpler help here', 'Throw up a message box with some simple help.', self._ShowSimpleHelp ) )
         menu_items.append( ( 'normal', 'open the html duplicates help', 'Open the help page for duplicates processing in your web browser.', page_func ) )
         
-        self._help_button = ClientGUICommon.MenuBitmapButton( self, CC.GlobalBMPs.help, menu_items )
+        self._help_button = ClientGUICommon.MenuBitmapButton( self._main_left_panel, CC.GlobalBMPs.help, menu_items )
         
-        self._preparing_panel = ClientGUICommon.StaticBox( self, '1 - preparation' )
+        #
         
-        # refresh button that just calls update
+        self._preparing_panel = ClientGUICommon.StaticBox( self._main_left_panel, 'maintenance' )
         
-        self._num_phashes_to_regen = ClientGUICommon.BetterStaticText( self._preparing_panel )
+        self._eligible_files = ClientGUICommon.BetterStaticText( self._preparing_panel )
         self._num_branches_to_regen = ClientGUICommon.BetterStaticText( self._preparing_panel )
         
-        self._phashes_button = ClientGUICommon.BetterBitmapButton( self._preparing_panel, CC.GlobalBMPs.play, self._RegeneratePhashes )
         self._branches_button = ClientGUICommon.BetterBitmapButton( self._preparing_panel, CC.GlobalBMPs.play, self._RebalanceTree )
         
         #
         
-        self._searching_panel = ClientGUICommon.StaticBox( self, '2 - discovery' )
+        self._searching_panel = ClientGUICommon.StaticBox( self._main_left_panel, 'finding potential duplicates' )
         
         menu_items = []
         
@@ -973,43 +1055,61 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         #
         
-        self._filtering_panel = ClientGUICommon.StaticBox( self, '3 - processing' )
-        
-        self._file_domain_button = ClientGUICommon.BetterButton( self._filtering_panel, 'file domain', self._FileDomainButtonHit )
-        self._num_unknown_duplicates = ClientGUICommon.BetterStaticText( self._filtering_panel )
-        self._num_better_duplicates = ClientGUICommon.BetterStaticText( self._filtering_panel )
-        self._num_better_duplicates.SetToolTip( 'If this stays at 0, it is likely because your \'worse\' files are being deleted and so are leaving this file domain!' )
-        self._num_same_quality_duplicates = ClientGUICommon.BetterStaticText( self._filtering_panel )
-        self._num_alternate_duplicates = ClientGUICommon.BetterStaticText( self._filtering_panel )
-        
-        
         menu_items = []
         
-        menu_items.append( ( 'normal', 'edit duplicate action options for \'this is better\'', 'edit what content is merged when you filter files', HydrusData.Call( self._EditMergeOptions, HC.DUPLICATE_BETTER ) ) )
-        menu_items.append( ( 'normal', 'edit duplicate action options for \'same quality\'', 'edit what content is merged when you filter files', HydrusData.Call( self._EditMergeOptions, HC.DUPLICATE_SAME_QUALITY ) ) )
-        menu_items.append( ( 'normal', 'edit duplicate action options for \'alternates\'', 'edit what content is merged when you filter files', HydrusData.Call( self._EditMergeOptions, HC.DUPLICATE_ALTERNATE ) ) )
-        menu_items.append( ( 'normal', 'edit duplicate action options for \'not duplicates\'', 'edit what content is merged when you filter files', HydrusData.Call( self._EditMergeOptions, HC.DUPLICATE_NOT_DUPLICATE ) ) )
+        menu_items.append( ( 'normal', 'edit duplicate metadata merge options for \'this is better\'', 'edit what content is merged when you filter files', HydrusData.Call( self._EditMergeOptions, HC.DUPLICATE_BETTER ) ) )
+        menu_items.append( ( 'normal', 'edit duplicate metadata merge options for \'same quality\'', 'edit what content is merged when you filter files', HydrusData.Call( self._EditMergeOptions, HC.DUPLICATE_SAME_QUALITY ) ) )
         
-        self._edit_merge_options = ClientGUICommon.MenuButton( self._filtering_panel, 'edit default duplicate action options', menu_items )
+        if new_options.GetBoolean( 'advanced_mode' ):
+            
+            menu_items.append( ( 'normal', 'edit duplicate metadata merge options for \'alternates\' (advanced!)', 'edit what content is merged when you filter files', HydrusData.Call( self._EditMergeOptions, HC.DUPLICATE_ALTERNATE ) ) )
+            
         
-        self._launch_filter = ClientGUICommon.BetterButton( self._filtering_panel, 'launch the filter', self._LaunchFilter )
-        
-        random_filtering_panel = ClientGUICommon.StaticBox( self._filtering_panel, 'quick and dirty filtering' )
-        
-        self._show_some_dupes = ClientGUICommon.BetterButton( random_filtering_panel, 'show some random potential pairs', self._ShowSomeDupes )
-        self._set_random_as_alternates_button = ClientGUICommon.BetterButton( random_filtering_panel, 'set current media as all alternates', self._SetCurrentMediaAs, HC.DUPLICATE_ALTERNATE )
-        self._set_random_as_same_quality_button = ClientGUICommon.BetterButton( random_filtering_panel, 'set current media as all same quality', self._SetCurrentMediaAs, HC.DUPLICATE_SAME_QUALITY )
-        self._set_random_as_not_duplicates_button = ClientGUICommon.BetterButton( random_filtering_panel, 'set current media as not duplicates', self._SetCurrentMediaAs, HC.DUPLICATE_NOT_DUPLICATE )
+        self._edit_merge_options = ClientGUICommon.MenuButton( self._main_right_panel, 'edit default duplicate metadata merge options', menu_items )
         
         #
         
-        new_options = self._controller.new_options
+        self._filtering_panel = ClientGUICommon.StaticBox( self._main_right_panel, 'duplicate filter' )
+        
+        file_search_context = management_controller.GetVariable( 'file_search_context' )
+        
+        predicates = file_search_context.GetPredicates()
+        
+        self._active_predicates_box = ClientGUIListBoxes.ListBoxTagsActiveSearchPredicates( self._filtering_panel, self._page_key, predicates )
+        
+        self._ac_read = ClientGUIACDropdown.AutoCompleteDropdownTagsRead( self._filtering_panel, self._page_key, file_search_context, allow_all_known_files = False )
+        
+        self._both_files_match = wx.CheckBox( self._filtering_panel )
+        
+        self._num_potential_duplicates = ClientGUICommon.BetterStaticText( self._filtering_panel )
+        self._refresh_dupe_counts_button = ClientGUICommon.BetterBitmapButton( self._filtering_panel, CC.GlobalBMPs.refresh, self._RefreshDuplicateCounts )
+        
+        self._launch_filter = ClientGUICommon.BetterButton( self._filtering_panel, 'launch the filter', self._LaunchFilter )
+        
+        #
+        
+        random_filtering_panel = ClientGUICommon.StaticBox( self._main_right_panel, 'quick and dirty processing' )
+        
+        self._show_some_dupes = ClientGUICommon.BetterButton( random_filtering_panel, 'show some random potential pairs', self._ShowRandomPotentialDupes )
+        
+        self._set_random_as_same_quality_button = ClientGUICommon.BetterButton( random_filtering_panel, 'set current media as duplicates of the same quality', self._SetCurrentMediaAs, HC.DUPLICATE_SAME_QUALITY )
+        self._set_random_as_alternates_button = ClientGUICommon.BetterButton( random_filtering_panel, 'set current media as all related alternates', self._SetCurrentMediaAs, HC.DUPLICATE_ALTERNATE )
+        self._set_random_as_false_positives_button = ClientGUICommon.BetterButton( random_filtering_panel, 'set current media as not related/false positive', self._SetCurrentMediaAs, HC.DUPLICATE_FALSE_POSITIVE )
+        
+        #
+        
+        self._main_notebook.AddPage( self._main_left_panel, 'preparation', select = False )
+        self._main_notebook.AddPage( self._main_right_panel, 'filtering', select = True )
+        
+        #
         
         self._search_distance_spinctrl.SetValue( new_options.GetInteger( 'similar_files_duplicate_pairs_search_distance' ) )
         
-        duplicate_filter_file_domain = management_controller.GetKey( 'duplicate_filter_file_domain' )
+        self._both_files_match.SetValue( management_controller.GetVariable( 'both_files_match' ) )
         
-        wx.CallAfter( self._SetFileDomain, duplicate_filter_file_domain ) # this spawns a refreshandupdatestatus
+        self._both_files_match.Bind( wx.EVT_CHECKBOX, self.EventBothFilesHitChanged )
+        
+        self._UpdateBothFilesMatchButton()
         
         #
         
@@ -1020,9 +1120,9 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         gridbox_1.AddGrowableCol( 0, 1 )
         
-        gridbox_1.Add( self._num_phashes_to_regen, CC.FLAGS_VCENTER )
+        gridbox_1.Add( self._eligible_files, CC.FLAGS_VCENTER )
         gridbox_1.Add( ( 10, 10 ), CC.FLAGS_EXPAND_PERPENDICULAR )
-        gridbox_1.Add( self._phashes_button, CC.FLAGS_VCENTER )
+        gridbox_1.Add( ( 10, 10 ), CC.FLAGS_EXPAND_PERPENDICULAR )
         gridbox_1.Add( self._num_branches_to_regen, CC.FLAGS_VCENTER )
         gridbox_1.Add( ( 10, 10 ), CC.FLAGS_EXPAND_PERPENDICULAR )
         gridbox_1.Add( self._branches_button, CC.FLAGS_VCENTER )
@@ -1049,37 +1149,66 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         #
         
-        random_filtering_panel.Add( self._show_some_dupes, CC.FLAGS_EXPAND_PERPENDICULAR )
-        random_filtering_panel.Add( self._set_random_as_alternates_button, CC.FLAGS_EXPAND_PERPENDICULAR )
-        random_filtering_panel.Add( self._set_random_as_same_quality_button, CC.FLAGS_EXPAND_PERPENDICULAR )
-        random_filtering_panel.Add( self._set_random_as_not_duplicates_button, CC.FLAGS_EXPAND_PERPENDICULAR )
-        
-        self._filtering_panel.Add( self._file_domain_button, CC.FLAGS_EXPAND_PERPENDICULAR )
-        self._filtering_panel.Add( self._num_unknown_duplicates, CC.FLAGS_EXPAND_PERPENDICULAR )
-        self._filtering_panel.Add( self._num_better_duplicates, CC.FLAGS_EXPAND_PERPENDICULAR )
-        self._filtering_panel.Add( self._num_same_quality_duplicates, CC.FLAGS_EXPAND_PERPENDICULAR )
-        self._filtering_panel.Add( self._num_alternate_duplicates, CC.FLAGS_EXPAND_PERPENDICULAR )
-        self._filtering_panel.Add( self._edit_merge_options, CC.FLAGS_EXPAND_PERPENDICULAR )
-        self._filtering_panel.Add( self._launch_filter, CC.FLAGS_EXPAND_PERPENDICULAR )
-        self._filtering_panel.Add( random_filtering_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
-        
-        #
-        
         hbox = wx.BoxSizer( wx.HORIZONTAL )
         
+        hbox.Add( self._refresh_maintenance_status, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
+        hbox.Add( self._refresh_maintenance_button, CC.FLAGS_VCENTER )
         hbox.Add( self._cog_button, CC.FLAGS_VCENTER )
         hbox.Add( self._help_button, CC.FLAGS_VCENTER )
         
         vbox = ClientGUICommon.BetterBoxSizer( wx.VERTICAL )
         
-        vbox.Add( hbox, CC.FLAGS_BUTTON_SIZER )
+        vbox.Add( hbox, CC.FLAGS_EXPAND_PERPENDICULAR )
         vbox.Add( self._preparing_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
         vbox.Add( self._searching_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        self._main_left_panel.SetSizer( vbox )
+        
+        #
+        
+        text_and_button_hbox = wx.BoxSizer( wx.HORIZONTAL )
+        
+        text_and_button_hbox.Add( self._num_potential_duplicates, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
+        text_and_button_hbox.Add( self._refresh_dupe_counts_button, CC.FLAGS_VCENTER )
+        
+        rows = []
+        
+        rows.append( ( 'both files of pair match in search: ', self._both_files_match ) )
+        
+        gridbox = ClientGUICommon.WrapInGrid( self._filtering_panel, rows )
+        
+        self._filtering_panel.Add( self._active_predicates_box, CC.FLAGS_EXPAND_PERPENDICULAR )
+        self._filtering_panel.Add( self._ac_read, CC.FLAGS_EXPAND_PERPENDICULAR )
+        self._filtering_panel.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
+        self._filtering_panel.Add( text_and_button_hbox, CC.FLAGS_EXPAND_PERPENDICULAR )
+        self._filtering_panel.Add( self._launch_filter, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        random_filtering_panel.Add( self._show_some_dupes, CC.FLAGS_EXPAND_PERPENDICULAR )
+        random_filtering_panel.Add( self._set_random_as_same_quality_button, CC.FLAGS_EXPAND_PERPENDICULAR )
+        random_filtering_panel.Add( self._set_random_as_alternates_button, CC.FLAGS_EXPAND_PERPENDICULAR )
+        random_filtering_panel.Add( self._set_random_as_false_positives_button, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        vbox = ClientGUICommon.BetterBoxSizer( wx.VERTICAL )
+        
+        vbox.Add( self._edit_merge_options, CC.FLAGS_EXPAND_PERPENDICULAR )
         vbox.Add( self._filtering_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        vbox.Add( random_filtering_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        self._main_right_panel.SetSizer( vbox )
+        
+        #
+        
+        vbox = ClientGUICommon.BetterBoxSizer( wx.VERTICAL )
+        
+        vbox.Add( self._main_notebook, CC.FLAGS_EXPAND_BOTH_WAYS )
         
         self.SetSizer( vbox )
         
-        HG.client_controller.sub( self, 'RefreshAndUpdateStatus', 'refresh_dupe_numbers' )
+        self._controller.sub( self, 'RefreshAllNumbers', 'refresh_dupe_page_numbers' )
+        self._controller.sub( self, 'RefreshQuery', 'refresh_query' )
+        self._controller.sub( self, 'SearchImmediately', 'notify_search_immediately' )
+        
+        HG.client_controller.pub( 'refresh_dupe_page_numbers' )
         
     
     def _EditMergeOptions( self, duplicate_type ):
@@ -1103,35 +1232,26 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
             
         
     
-    def _FileDomainButtonHit( self ):
+    def _GetFileSearchContextAndBothFilesMatch( self ):
         
-        services_manager = HG.client_controller.services_manager
+        file_search_context = self._ac_read.GetFileSearchContext()
         
-        services = []
+        predicates = self._active_predicates_box.GetPredicates()
         
-        services.append( services_manager.GetService( CC.LOCAL_FILE_SERVICE_KEY ) )
-        services.append( services_manager.GetService( CC.TRASH_SERVICE_KEY ) )
-        services.append( services_manager.GetService( CC.COMBINED_LOCAL_FILE_SERVICE_KEY ) )
+        file_search_context.SetPredicates( predicates )
         
-        menu = wx.Menu()
+        both_files_match = self._both_files_match.GetValue()
         
-        for service in services:
-            
-            call = HydrusData.Call( self._SetFileDomain, service.GetServiceKey() )
-            
-            ClientGUIMenus.AppendMenuItem( self, menu, service.GetName(), 'Set the filtering file domain.', call )
-            
-        
-        HG.client_controller.PopupMenu( self._file_domain_button, menu )
+        return ( file_search_context, both_files_match )
         
     
     def _LaunchFilter( self ):
         
-        duplicate_filter_file_domain = self._management_controller.GetKey( 'duplicate_filter_file_domain' )
+        ( file_search_context, both_files_match ) = self._GetFileSearchContextAndBothFilesMatch()
         
         canvas_frame = ClientGUICanvas.CanvasFrame( self.GetTopLevelParent() )
         
-        canvas_window = ClientGUICanvas.CanvasFilterDuplicates( canvas_frame, duplicate_filter_file_domain )
+        canvas_window = ClientGUICanvas.CanvasFilterDuplicates( canvas_frame, file_search_context, both_files_match )
         
         canvas_frame.SetCanvas( canvas_window )
         
@@ -1140,31 +1260,89 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         job_key = ClientThreading.JobKey( cancellable = True )
         
+        job_key.SetVariable( 'popup_title', 'initialising' )
+        
         self._controller.Write( 'maintain_similar_files_tree', job_key = job_key )
         
         self._controller.pub( 'modal_message', job_key )
         
-        self._controller.CallToThread( self._THREADWaitOnJob, job_key )
+        self._controller.CallLater( 1.0, WaitOnDupeFilterJob, job_key )
         
     
-    def _RefreshAndUpdateStatus( self ):
+    def _RefreshDuplicateCounts( self ):
         
-        duplicate_filter_file_domain = self._management_controller.GetKey( 'duplicate_filter_file_domain' )
+        def wx_code( potential_duplicates_count ):
+            
+            if not self:
+                
+                return
+                
+            
+            self._currently_refreshing_dupe_count_numbers = False
+            
+            self._refresh_dupe_counts_button.Enable()
+            
+            self._UpdatePotentialDuplicatesCount( potential_duplicates_count )
+            
         
-        self._similar_files_maintenance_status = self._controller.Read( 'similar_files_maintenance_status', duplicate_filter_file_domain )
+        def thread_do_it( file_search_context, both_files_match ):
+            
+            potential_duplicates_count = HG.client_controller.Read( 'potential_duplicates_count', file_search_context, both_files_match )
+            
+            wx.CallAfter( wx_code, potential_duplicates_count )
+            
         
-        self._UpdateImportStatus()
+        if not self._currently_refreshing_dupe_count_numbers:
+            
+            self._currently_refreshing_dupe_count_numbers = True
+            
+            self._refresh_dupe_counts_button.Disable()
+            
+            self._num_potential_duplicates.SetLabelText( 'updating\u2026' )
+            
+            ( file_search_context, both_files_match ) = self._GetFileSearchContextAndBothFilesMatch()
+            
+            HG.client_controller.CallToThread( thread_do_it, file_search_context, both_files_match )
+            
         
     
-    def _RegeneratePhashes( self ):
+    def _RefreshMaintenanceStatus( self ):
         
-        job_key = ClientThreading.JobKey( cancellable = True )
+        def wx_code( similar_files_maintenance_status ):
+            
+            if not self:
+                
+                return
+                
+            
+            self._currently_refreshing_maintenance_numbers = False
+            
+            self._refresh_maintenance_status.SetLabelText( '' )
+            
+            self._refresh_maintenance_button.Enable()
+            
+            self._similar_files_maintenance_status = similar_files_maintenance_status
+            
+            self._UpdateMaintenanceStatus()
+            
         
-        self._controller.Write( 'maintain_similar_files_phashes', job_key = job_key )
+        def thread_do_it():
+            
+            similar_files_maintenance_status = HG.client_controller.Read( 'similar_files_maintenance_status' )
+            
+            wx.CallAfter( wx_code, similar_files_maintenance_status )
+            
         
-        self._controller.pub( 'modal_message', job_key )
-        
-        self._controller.CallToThread( self._THREADWaitOnJob, job_key )
+        if not self._currently_refreshing_maintenance_numbers:
+            
+            self._currently_refreshing_maintenance_numbers = True
+            
+            self._refresh_maintenance_status.SetLabelText( 'updating\u2026' )
+            
+            self._refresh_maintenance_button.Disable()
+            
+            HG.client_controller.CallToThread( thread_do_it )
+            
         
     
     def _ResetUnknown( self ):
@@ -1177,9 +1355,25 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
             
             if dlg.ShowModal() == wx.ID_YES:
                 
-                self._controller.Write( 'delete_unknown_duplicate_pairs' )
+                self._controller.Write( 'delete_potential_duplicate_pairs' )
                 
-                self._RefreshAndUpdateStatus()
+                self._RefreshMaintenanceStatus()
+                
+            
+        
+    
+    def _SearchDomainUpdated( self ):
+        
+        ( file_search_context, both_files_match ) = self._GetFileSearchContextAndBothFilesMatch()
+        
+        self._management_controller.SetVariable( 'file_search_context', file_search_context )
+        self._management_controller.SetVariable( 'both_files_match', both_files_match )
+        
+        self._UpdateBothFilesMatchButton()
+        
+        if self._ac_read.IsSynchronised():
+            
+            self._RefreshDuplicateCounts()
             
         
     
@@ -1187,13 +1381,15 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         job_key = ClientThreading.JobKey( cancellable = True )
         
+        job_key.SetVariable( 'popup_title', 'initialising' )
+        
         search_distance = self._search_distance_spinctrl.GetValue()
         
-        self._controller.Write( 'maintain_similar_files_duplicate_pairs', search_distance, job_key = job_key )
+        self._controller.Write( 'maintain_similar_files_search_for_potential_duplicates', search_distance, job_key = job_key )
         
         self._controller.pub( 'modal_message', job_key )
         
-        self._controller.CallToThread( self._THREADWaitOnJob, job_key )
+        self._controller.CallLater( 1.0, WaitOnDupeFilterJob, job_key )
         
     
     def _SetCurrentMediaAs( self, duplicate_type ):
@@ -1204,108 +1400,64 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         if change_made:
             
-            self._RefreshAndUpdateStatus()
+            self._RefreshDuplicateCounts()
             
-            self._ShowSomeDupes()
+            self._ShowRandomPotentialDupes()
             
-        
-    
-    def _SetFileDomain( self, service_key ):
-        
-        self._management_controller.SetKey( 'duplicate_filter_file_domain', service_key )
-        
-        services_manager = HG.client_controller.services_manager
-        
-        service = services_manager.GetService( service_key )
-        
-        self._file_domain_button.SetLabelText( service.GetName() )
-        
-        self._RefreshAndUpdateStatus()
         
     
     def _SetSearchDistance( self, value ):
         
         self._search_distance_spinctrl.SetValue( value )
         
-        self._UpdateImportStatus()
+        self._UpdateMaintenanceStatus()
         
     
-    def _ShowSimpleHelp( self ):
+    def _ShowRandomPotentialDupes( self ):
         
-        message = 'This page helps you discover and manage files that are very similar to each other. Sometimes these files will be exactly the same--but perhaps have a different resolution or image quality--or they may be recolours or have other small alterations. Here you can quickly define these relationships and hence merge your tags and ratings and, if you wish, delete the \'bad\' files.'
-        message += os.linesep * 2
-        message += 'There are three steps to this page:'
-        message += os.linesep * 2
-        message += '1 - Preparing the database for the CPU-heavy job of searching for duplicates.'
-        message += os.linesep
-        message += '2 - Performing the search and saving the results.'
-        message += os.linesep
-        message += '3 - Walking through the pairs or groups of potential duplicates and telling the client how they are related.'
-        message += os.linesep * 2
-        message += 'For the first two steps, you likely just want to click the play buttons and wait for them to complete. They are CPU intensive and lock the client as they work. You can also set them to run in idle time from the cog icon. For the search \'distance\', start at the fast and limited \'exact match\' (0 \'hamming distance\') and slowly expand it as you gain experience with the system.'
-        message += os.linesep * 2
-        message += 'Once you have found some potential pairs, you can either show some random groups as thumbnails (and process them manually however you prefer), or you can launch the specialised duplicate filter, which lets you quickly assign duplicate status to pairs of files and will automatically merge files and tags between dupes however you prefer.'
-        message += os.linesep * 2
-        message += 'After launching the duplicate filter, check the keyboard and cog icons on its top hover window. They will let you assign default content merge options (including whether you wish to trash \'bad\' files) and also change the shortcuts for setting the different duplicate statuses. It works like the archive/delete filter, with left-click setting \'this is better\' and right-click setting \'alternates\' by default.'
-        message += os.linesep * 2
-        message += 'A list of the different duplicate statuses and their meanings will follow this message.'
+        ( file_search_context, both_files_match ) = self._GetFileSearchContextAndBothFilesMatch()
         
-        wx.MessageBox( message )
+        file_service_key = file_search_context.GetFileServiceKey()
         
-        message = 'The currently supported duplicate statuses are:'
-        message += os.linesep * 2
-        message += 'potential - This is the default state newly discovered pairs are assigned. They will be loaded in the filter for you to look at.'
-        message += os.linesep * 2
-        message += 'better/worse - This tells the client that the pair of files are duplicates--but the one you are looking at has better image quality or resolution or lacks an annoying watermark or so on.'
-        message += os.linesep * 2
-        message += 'same quality - This tells the client that the pair of files are duplicates, and that you cannot discern an obvious quality difference.'
-        message += os.linesep * 2
-        message += 'alternates - This tells the client that the pair of files are not duplicates but that they are related--perhaps they are a recolour or are an artist\'s different versions of a particular scene. A future version of the client will allow you to further process these alternate groups into family structures and so on.'
-        message += os.linesep * 2
-        message += 'not duplicates - This tells the client that the discovered pair is a false positive--they are not the same and are not otherwise related. This usually happens when the same part of two files have a similar shape by accident, such as if a hair fringe and a mountain range happen to line up.'
+        hashes = self._controller.Read( 'random_potential_duplicate_hashes', file_search_context, both_files_match )
         
-        wx.MessageBox( message )
+        if len( hashes ) == 0:
+            
+            wx.MessageBox( 'No files were found. Try refreshing the count, and if this keeps happening, please let hydrus_dev know.' )
+            
+            return
+            
         
-    
-    def _ShowSomeDupes( self ):
+        media_results = self._controller.Read( 'media_results', hashes, sorted = True )
         
-        duplicate_filter_file_domain = self._management_controller.GetKey( 'duplicate_filter_file_domain' )
+        if len( media_results ) == 0:
+            
+            wx.MessageBox( 'Files were found, but no media results could be loaded for them. Try refreshing the count, and if this keeps happening, please let hydrus_dev know.' )
+            
+            return
+            
         
-        hashes = self._controller.Read( 'duplicate_hashes', duplicate_filter_file_domain, None, HC.DUPLICATE_UNKNOWN )
-        
-        media_results = self._controller.Read( 'media_results', hashes )
-        
-        panel = ClientGUIMedia.MediaPanelThumbnails( self._page, self._page_key, CC.COMBINED_LOCAL_FILE_SERVICE_KEY, media_results )
+        panel = ClientGUIMedia.MediaPanelThumbnails( self._page, self._page_key, file_service_key, media_results )
         
         self._page.SwapMediaPanel( panel )
         
     
-    def _UpdateImportStatus( self ):
+    def _UpdateMaintenanceStatus( self ):
         
-        ( num_phashes_to_regen, num_branches_to_regen, searched_distances_to_count, duplicate_types_to_count ) = self._similar_files_maintenance_status
+        work_can_be_done = False
+        
+        if self._similar_files_maintenance_status is None:
+            
+            return
+            
+        
+        ( num_branches_to_regen, searched_distances_to_count ) = self._similar_files_maintenance_status
         
         self._cog_button.Enable()
         
-        ClientGUICommon.SetBitmapButtonBitmap( self._phashes_button, CC.GlobalBMPs.play )
-        ClientGUICommon.SetBitmapButtonBitmap( self._branches_button, CC.GlobalBMPs.play )
-        ClientGUICommon.SetBitmapButtonBitmap( self._search_button, CC.GlobalBMPs.play )
+        total_num_files = sum( searched_distances_to_count.values() )
         
-        total_num_files = max( num_phashes_to_regen, sum( searched_distances_to_count.values() ) )
-        
-        if num_phashes_to_regen == 0:
-            
-            self._num_phashes_to_regen.SetLabelText( 'All ' + HydrusData.ToHumanInt( total_num_files ) + ' eligible files up to date!' )
-            
-            self._phashes_button.Disable()
-            
-        else:
-            
-            num_done = total_num_files - num_phashes_to_regen
-            
-            self._num_phashes_to_regen.SetLabelText( HydrusData.ConvertValueRangeToPrettyString( num_done, total_num_files ) + ' eligible files up to date.' )
-            
-            self._phashes_button.Enable()
-            
+        self._eligible_files.SetLabelText( '{} eligible files in the system.'.format( HydrusData.ToHumanInt( total_num_files ) ) )
         
         if num_branches_to_regen == 0:
             
@@ -1318,6 +1470,8 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
             self._num_branches_to_regen.SetLabelText( HydrusData.ToHumanInt( num_branches_to_regen ) + ' search branches to rebalance.' )
             
             self._branches_button.Enable()
+            
+            work_can_be_done = True
             
         
         self._search_distance_button.Enable()
@@ -1361,15 +1515,40 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
             
             self._search_button.Enable()
             
+            work_can_be_done = True
+            
         
-        num_unknown = duplicate_types_to_count[ HC.DUPLICATE_UNKNOWN ]
+        if work_can_be_done:
+            
+            page_name = 'preparation (needs work)'
+            
+        else:
+            
+            page_name = 'preparation'
+            
         
-        self._num_unknown_duplicates.SetLabelText( HydrusData.ToHumanInt( num_unknown ) + ' potential pairs.' )
-        self._num_better_duplicates.SetLabelText( HydrusData.ToHumanInt( duplicate_types_to_count[ HC.DUPLICATE_BETTER ] ) + ' better/worse pairs.' )
-        self._num_same_quality_duplicates.SetLabelText( HydrusData.ToHumanInt( duplicate_types_to_count[ HC.DUPLICATE_SAME_QUALITY ] ) + ' same quality pairs.' )
-        self._num_alternate_duplicates.SetLabelText( HydrusData.ToHumanInt( duplicate_types_to_count[ HC.DUPLICATE_ALTERNATE ] ) + ' alternate pairs.' )
+        self._main_notebook.SetPageText( 0, page_name )
         
-        if num_unknown > 0:
+    
+    def _UpdateBothFilesMatchButton( self ):
+        
+        ( file_search_context, both_files_match ) = self._GetFileSearchContextAndBothFilesMatch()
+        
+        if file_search_context.IsJustSystemEverything() or file_search_context.HasNoPredicates():
+            
+            self._both_files_match.Disable()
+            
+        else:
+            
+            self._both_files_match.Enable()
+            
+        
+    
+    def _UpdatePotentialDuplicatesCount( self, potential_duplicates_count ):
+        
+        self._num_potential_duplicates.SetLabelText( HydrusData.ToHumanInt( potential_duplicates_count ) + ' potential pairs.' )
+        
+        if potential_duplicates_count > 0:
             
             self._show_some_dupes.Enable()
             self._launch_filter.Enable()
@@ -1381,39 +1560,37 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
             
         
     
-    def _THREADWaitOnJob( self, job_key ):
+    def EventBothFilesHitChanged( self, event ):
         
-        def wx_done():
-            
-            if not self:
-                
-                return
-                
-            
-            self._RefreshAndUpdateStatus()
-            
-        
-        while not job_key.IsDone():
-            
-            if HydrusThreading.IsThreadShuttingDown():
-                
-                return
-                
-            
-            time.sleep( 0.25 )
-            
-        
-        wx.CallAfter( wx_done )
+        self._SearchDomainUpdated()
         
     
     def EventSearchDistanceChanged( self, event ):
         
-        self._UpdateImportStatus()
+        self._UpdateMaintenanceStatus()
         
     
-    def RefreshAndUpdateStatus( self ):
+    def RefreshAllNumbers( self ):
         
-        self._RefreshAndUpdateStatus()
+        self._RefreshMaintenanceStatus()
+        
+        self._RefreshDuplicateCounts()
+        
+    
+    def RefreshQuery( self, page_key ):
+        
+        if page_key == self._page_key:
+            
+            self._SearchDomainUpdated()
+            
+        
+    
+    def SearchImmediately( self, page_key, value ):
+        
+        if page_key == self._page_key:
+            
+            self._SearchDomainUpdated()
+            
         
     
 management_panel_types_to_classes[ MANAGEMENT_TYPE_DUPLICATE_FILTER ] = ManagementPanelDuplicateFilter
@@ -1468,8 +1645,7 @@ class ManagementPanelImporterHDD( ManagementPanelImporter ):
         self._current_action = ClientGUICommon.BetterStaticText( self._import_queue_panel )
         self._file_seed_cache_control = ClientGUIFileSeedCache.FileSeedCacheStatusControl( self._import_queue_panel, self._controller, self._page_key )
         
-        self._pause_button = wx.BitmapButton( self._import_queue_panel, bitmap = CC.GlobalBMPs.pause )
-        self._pause_button.Bind( wx.EVT_BUTTON, self.EventPause )
+        self._pause_button = ClientGUICommon.BetterBitmapButton( self._import_queue_panel, CC.GlobalBMPs.pause, self.Pause )
         
         self._hdd_import = self._management_controller.GetVariable( 'hdd_import' )
         
@@ -1512,11 +1688,11 @@ class ManagementPanelImporterHDD( ManagementPanelImporter ):
         
         if paused:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.play )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.play )
             
         else:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.pause )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.pause )
             
         
         if paused:
@@ -1542,7 +1718,7 @@ class ManagementPanelImporterHDD( ManagementPanelImporter ):
             
         
     
-    def EventPause( self, event ):
+    def Pause( self ):
         
         self._hdd_import.PausePlay()
         
@@ -1610,6 +1786,8 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
         
         self._query_input = ClientGUIControls.TextAndPasteCtrl( self._gallery_downloader_panel, self._PendQueries )
         
+        self._cog_button = ClientGUICommon.BetterBitmapButton( self._gallery_downloader_panel, CC.GlobalBMPs.cog, self._ShowCogMenu )
+        
         self._gug_key_and_name = ClientGUIImport.GUGKeyAndNameSelector( self._gallery_downloader_panel, self._multiple_gallery_import.GetGUGKeyAndName(), update_callable = self._SetGUGKeyAndName )
         
         self._file_limit = ClientGUICommon.NoneableSpinCtrl( self._gallery_downloader_panel, 'stop after this many files', min = 1, none_phrase = 'no limit' )
@@ -1627,10 +1805,15 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
         
         #
         
+        input_hbox = wx.BoxSizer( wx.HORIZONTAL )
+        
+        input_hbox.Add( self._query_input, CC.FLAGS_EXPAND_BOTH_WAYS )
+        input_hbox.Add( self._cog_button, CC.FLAGS_VCENTER )
+        
         self._gallery_downloader_panel.Add( self._gallery_importers_status_st_top, CC.FLAGS_EXPAND_PERPENDICULAR )
         self._gallery_downloader_panel.Add( self._gallery_importers_status_st_bottom, CC.FLAGS_EXPAND_PERPENDICULAR )
         self._gallery_downloader_panel.Add( self._gallery_importers_listctrl_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
-        self._gallery_downloader_panel.Add( self._query_input, CC.FLAGS_EXPAND_PERPENDICULAR )
+        self._gallery_downloader_panel.Add( input_hbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         self._gallery_downloader_panel.Add( self._gug_key_and_name, CC.FLAGS_EXPAND_PERPENDICULAR )
         self._gallery_downloader_panel.Add( self._file_limit, CC.FLAGS_EXPAND_PERPENDICULAR )
         self._gallery_downloader_panel.Add( self._file_import_options, CC.FLAGS_EXPAND_PERPENDICULAR )
@@ -1791,7 +1974,7 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
         
         if num_total > 0:
             
-            sort_float = float( num_done ) / num_total
+            sort_float = num_done / num_total
             
         else:
             
@@ -1804,7 +1987,7 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
         
         added = gallery_import.GetCreationTime()
         
-        pretty_added = HydrusData.TimestampToPrettyTimeDelta( added )
+        pretty_added = HydrusData.TimestampToPrettyTimeDelta( added, show_seconds = False )
         
         display_tuple = ( pretty_query_text, pretty_source, pretty_files_paused, pretty_gallery_paused, pretty_status, pretty_progress, pretty_added )
         sort_tuple = ( query_text, pretty_source, files_paused, gallery_paused, status, progress, added )
@@ -1836,7 +2019,12 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
         menu = wx.Menu()
         
         ClientGUIMenus.AppendMenuItem( self, menu, 'copy queries', 'Copy all the selected downloaders\' queries to clipboard.', self._CopySelectedQueries )
-        ClientGUIMenus.AppendMenuItem( self, menu, 'show all importers\' files in a new page', 'Gather the presented files for the selected importers and show them in a new page.', self._ShowSelectionInNewPage )
+        
+        ClientGUIMenus.AppendSeparator( menu )
+        
+        ClientGUIMenus.AppendMenuItem( self, menu, 'show all importers\' presented files', 'Gather the presented files for the selected importers and show them in a new page.', self._ShowSelectedImportersFiles, show = 'presented' )
+        ClientGUIMenus.AppendMenuItem( self, menu, 'show all importers\' new files', 'Gather the presented files for the selected importers and show them in a new page.', self._ShowSelectedImportersFiles, show = 'new' )
+        ClientGUIMenus.AppendMenuItem( self, menu, 'show all importers\' files', 'Gather the presented files for the selected importers and show them in a new page.', self._ShowSelectedImportersFiles, show = 'all' )
         
         if self._CanRetryFailed():
             
@@ -1923,19 +2111,11 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
     
     def _PendQueries( self, queries ):
         
-        first_result = None
+        results = self._multiple_gallery_import.PendQueries( queries )
         
-        for query in queries:
+        if len( results ) > 0 and self._highlighted_gallery_import is None and HG.client_controller.new_options.GetBoolean( 'highlight_new_query' ):
             
-            result = self._multiple_gallery_import.PendQuery( query )
-            
-            if result is not None and first_result is None:
-                
-                first_result = result
-                
-            
-        
-        if first_result is not None and self._highlighted_gallery_import is None and HG.client_controller.new_options.GetBoolean( 'highlight_new_query' ):
+            first_result = results[ 0 ]
             
             self._HighlightGalleryImport( first_result )
             
@@ -2057,7 +2237,21 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
             
         
     
-    def _ShowSelectionInNewPage( self ):
+    def _ShowCogMenu( self ):
+        
+        menu = wx.Menu()
+        
+        ( start_file_queues_paused, start_gallery_queues_paused, merge_simultaneous_pends_to_one_importer ) = self._multiple_gallery_import.GetQueueStartSettings()
+        
+        ClientGUIMenus.AppendMenuCheckItem( self, menu, 'start new importers\' files paused', 'Start any new importers in a file import-paused state.', start_file_queues_paused, self._multiple_gallery_import.SetQueueStartSettings, not start_file_queues_paused, start_gallery_queues_paused, merge_simultaneous_pends_to_one_importer )
+        ClientGUIMenus.AppendMenuCheckItem( self, menu, 'start new importers\' search paused', 'Start any new importers in a gallery search-paused state.', start_gallery_queues_paused, self._multiple_gallery_import.SetQueueStartSettings, start_file_queues_paused, not start_gallery_queues_paused, merge_simultaneous_pends_to_one_importer )
+        ClientGUIMenus.AppendSeparator( menu )
+        ClientGUIMenus.AppendMenuCheckItem( self, menu, 'bundle multiple pasted queries into one importer (advanced)', 'If you are pasting many small queries at once (such as md5 lookups), check this to smooth out the workflow.', merge_simultaneous_pends_to_one_importer, self._multiple_gallery_import.SetQueueStartSettings, start_file_queues_paused, start_gallery_queues_paused, not merge_simultaneous_pends_to_one_importer )
+        
+        HG.client_controller.PopupMenu( self._cog_button, menu )
+        
+    
+    def _ShowSelectedImportersFiles( self, show = 'presented' ):
         
         gallery_imports = self._gallery_importers_listctrl.GetData( only_selected = True )
         
@@ -2071,7 +2265,18 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
         
         for gallery_import in gallery_imports:
             
-            gallery_hashes = gallery_import.GetPresentedHashes()
+            if show == 'presented':
+                
+                gallery_hashes = gallery_import.GetPresentedHashes()
+                
+            elif show == 'new':
+                
+                gallery_hashes = gallery_import.GetNewHashes()
+                
+            elif show == 'all':
+                
+                gallery_hashes = gallery_import.GetHashes()
+                
             
             new_hashes = [ hash for hash in gallery_hashes if hash not in seen_hashes ]
             
@@ -2083,7 +2288,13 @@ class ManagementPanelImporterMultipleGallery( ManagementPanelImporter ):
         
         if len( hashes ) > 0:
             
-            HG.client_controller.pub( 'new_page_query', CC.LOCAL_FILE_SERVICE_KEY, initial_hashes = hashes )
+            self._ClearExistingHighlightAndPanel()
+            
+            media_results = self._controller.Read( 'media_results', hashes, sorted = True )
+            
+            panel = ClientGUIMedia.MediaPanelThumbnails( self._page, self._page_key, CC.LOCAL_FILE_SERVICE_KEY, media_results )
+            
+            self._page.SwapMediaPanel( panel )
             
         else:
             
@@ -2298,17 +2509,21 @@ class ManagementPanelImporterMultipleWatcher( ManagementPanelImporter ):
         
         self._UpdateImportStatus()
         
-        HG.client_controller.sub( self, 'PendURL', 'pend_url' )
         HG.client_controller.sub( self, '_ClearExistingHighlightAndPanel', 'clear_multiwatcher_highlights' )
         
     
-    def _AddURLs( self, urls ):
+    def _AddURLs( self, urls, service_keys_to_tags = None ):
+        
+        if service_keys_to_tags is None:
+            
+            service_keys_to_tags = ClientTags.ServiceKeysToTags()
+            
         
         first_result = None
         
         for url in urls:
             
-            result = self._multiple_watcher_import.AddURL( url )
+            result = self._multiple_watcher_import.AddURL( url, service_keys_to_tags )
             
             if result is not None and first_result is None:
                 
@@ -2440,7 +2655,7 @@ class ManagementPanelImporterMultipleWatcher( ManagementPanelImporter ):
         
         if num_total > 0:
             
-            sort_float = float( num_done ) / num_total
+            sort_float = num_done / num_total
             
         else:
             
@@ -2453,7 +2668,7 @@ class ManagementPanelImporterMultipleWatcher( ManagementPanelImporter ):
         
         added = watcher.GetCreationTime()
         
-        pretty_added = HydrusData.TimestampToPrettyTimeDelta( added )
+        pretty_added = HydrusData.TimestampToPrettyTimeDelta( added, show_seconds = False )
         
         watcher_status = self._multiple_watcher_import.GetWatcherSimpleStatus( watcher )
         
@@ -2495,7 +2710,12 @@ class ManagementPanelImporterMultipleWatcher( ManagementPanelImporter ):
         
         ClientGUIMenus.AppendMenuItem( self, menu, 'copy urls', 'Copy all the selected watchers\' urls to clipboard.', self._CopySelectedURLs )
         ClientGUIMenus.AppendMenuItem( self, menu, 'open urls', 'Open all the selected watchers\' urls in your browser.', self._OpenSelectedURLs )
-        ClientGUIMenus.AppendMenuItem( self, menu, 'show all watchers\' files in a new page', 'Gather the presented files for the selected watchers and show them in a new page.', self._ShowSelectionInNewPage )
+        
+        ClientGUIMenus.AppendSeparator( menu )
+        
+        ClientGUIMenus.AppendMenuItem( self, menu, 'show all watchers\' presented files', 'Gather the presented files for the selected watchers and show them in a new page.', self._ShowSelectedImportersFiles, show = 'presented' )
+        ClientGUIMenus.AppendMenuItem( self, menu, 'show all watchers\' new files', 'Gather the presented files for the selected watchers and show them in a new page.', self._ShowSelectedImportersFiles, show = 'new' )
+        ClientGUIMenus.AppendMenuItem( self, menu, 'show all watchers\' files', 'Gather the presented files for the selected watchers and show them in a new page.', self._ShowSelectedImportersFiles, show = 'all' )
         
         if self._CanRetryFailed():
             
@@ -2719,7 +2939,7 @@ class ManagementPanelImporterMultipleWatcher( ManagementPanelImporter ):
             
         
     
-    def _ShowSelectionInNewPage( self ):
+    def _ShowSelectedImportersFiles( self, show = 'presented' ):
         
         watchers = self._watchers_listctrl.GetData( only_selected = True )
         
@@ -2733,7 +2953,18 @@ class ManagementPanelImporterMultipleWatcher( ManagementPanelImporter ):
         
         for watcher in watchers:
             
-            watcher_hashes = watcher.GetPresentedHashes()
+            if show == 'presented':
+                
+                watcher_hashes = watcher.GetPresentedHashes()
+                
+            elif show == 'new':
+                
+                watcher_hashes = watcher.GetNewHashes()
+                
+            elif show == 'all':
+                
+                watcher_hashes = watcher.GetHashes()
+                
             
             new_hashes = [ hash for hash in watcher_hashes if hash not in seen_hashes ]
             
@@ -2745,7 +2976,13 @@ class ManagementPanelImporterMultipleWatcher( ManagementPanelImporter ):
         
         if len( hashes ) > 0:
             
-            HG.client_controller.pub( 'new_page_query', CC.LOCAL_FILE_SERVICE_KEY, initial_hashes = hashes )
+            self._ClearExistingHighlightAndPanel()
+            
+            media_results = self._controller.Read( 'media_results', hashes, sorted = True )
+            
+            panel = ClientGUIMedia.MediaPanelThumbnails( self._page, self._page_key, CC.LOCAL_FILE_SERVICE_KEY, media_results )
+            
+            self._page.SwapMediaPanel( panel )
             
         else:
             
@@ -2854,12 +3091,14 @@ class ManagementPanelImporterMultipleWatcher( ManagementPanelImporter ):
             
         
     
-    def PendURL( self, page_key, url ):
+    def PendURL( self, url, service_keys_to_tags = None ):
         
-        if page_key == self._page_key:
+        if service_keys_to_tags is None:
             
-            self._AddURLs( ( url, ) )
+            service_keys_to_tags = ClientTags.ServiceKeysToTags()
             
+        
+        self._AddURLs( ( url, ), service_keys_to_tags )
         
     
     def SetSearchFocus( self ):
@@ -2890,8 +3129,7 @@ class ManagementPanelImporterSimpleDownloader( ManagementPanelImporter ):
         
         self._import_queue_panel = ClientGUICommon.StaticBox( self._simple_downloader_panel, 'imports' )
         
-        self._pause_files_button = wx.BitmapButton( self._import_queue_panel, bitmap = CC.GlobalBMPs.pause )
-        self._pause_files_button.Bind( wx.EVT_BUTTON, self.EventPauseFiles )
+        self._pause_files_button = ClientGUICommon.BetterBitmapButton( self._import_queue_panel, CC.GlobalBMPs.pause, self.PauseFiles )
         
         self._current_action = ClientGUICommon.BetterStaticText( self._import_queue_panel, style = wx.ST_ELLIPSIZE_END )
         self._file_seed_cache_control = ClientGUIFileSeedCache.FileSeedCacheStatusControl( self._import_queue_panel, self._controller, self._page_key )
@@ -2903,8 +3141,7 @@ class ManagementPanelImporterSimpleDownloader( ManagementPanelImporter ):
         
         self._simple_parsing_jobs_panel = ClientGUICommon.StaticBox( self._simple_downloader_panel, 'simple parsing urls' )
         
-        self._pause_queue_button = wx.BitmapButton( self._simple_parsing_jobs_panel, bitmap = CC.GlobalBMPs.pause )
-        self._pause_queue_button.Bind( wx.EVT_BUTTON, self.EventPauseQueue )
+        self._pause_queue_button = ClientGUICommon.BetterBitmapButton( self._simple_parsing_jobs_panel, CC.GlobalBMPs.pause, self.PauseQueue )
         
         self._parser_status = ClientGUICommon.BetterStaticText( self._simple_parsing_jobs_panel, style = wx.ST_ELLIPSIZE_END )
         
@@ -2914,13 +3151,13 @@ class ManagementPanelImporterSimpleDownloader( ManagementPanelImporter ):
         
         self._pending_jobs_listbox = wx.ListBox( self._simple_parsing_jobs_panel, size = ( -1, 100 ) )
         
-        self._advance_button = wx.Button( self._simple_parsing_jobs_panel, label = u'\u2191' )
+        self._advance_button = wx.Button( self._simple_parsing_jobs_panel, label = '\u2191' )
         self._advance_button.Bind( wx.EVT_BUTTON, self.EventAdvance )
         
         self._delete_button = wx.Button( self._simple_parsing_jobs_panel, label = 'X' )
         self._delete_button.Bind( wx.EVT_BUTTON, self.EventDelete )
         
-        self._delay_button = wx.Button( self._simple_parsing_jobs_panel, label = u'\u2193' )
+        self._delay_button = wx.Button( self._simple_parsing_jobs_panel, label = '\u2193' )
         self._delay_button.Bind( wx.EVT_BUTTON, self.EventDelay )
         
         self._page_url_input = ClientGUIControls.TextAndPasteCtrl( self._simple_parsing_jobs_panel, self._PendPageURLs )
@@ -3201,20 +3438,20 @@ class ManagementPanelImporterSimpleDownloader( ManagementPanelImporter ):
         
         if queue_paused:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_queue_button, CC.GlobalBMPs.play )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_queue_button, CC.GlobalBMPs.play )
             
         else:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_queue_button, CC.GlobalBMPs.pause )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_queue_button, CC.GlobalBMPs.pause )
             
         
         if files_paused:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_files_button, CC.GlobalBMPs.play )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_files_button, CC.GlobalBMPs.play )
             
         else:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_files_button, CC.GlobalBMPs.pause )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_files_button, CC.GlobalBMPs.pause )
             
         
         ( file_network_job, page_network_job ) = self._simple_downloader_import.GetNetworkJobs()
@@ -3286,14 +3523,14 @@ class ManagementPanelImporterSimpleDownloader( ManagementPanelImporter ):
         event.Skip()
         
     
-    def EventPauseQueue( self, event ):
+    def PauseQueue( self ):
         
         self._simple_downloader_import.PausePlayQueue()
         
         self._UpdateImportStatus()
         
     
-    def EventPauseFiles( self, event ):
+    def PauseFiles( self ):
         
         self._simple_downloader_import.PausePlayFiles()
         
@@ -3322,8 +3559,7 @@ class ManagementPanelImporterURLs( ManagementPanelImporter ):
         
         self._url_panel = ClientGUICommon.StaticBox( self, 'url downloader' )
         
-        self._pause_button = wx.BitmapButton( self._url_panel, bitmap = CC.GlobalBMPs.pause )
-        self._pause_button.Bind( wx.EVT_BUTTON, self.EventPause )
+        self._pause_button = ClientGUICommon.BetterBitmapButton( self._url_panel, CC.GlobalBMPs.pause, self.Pause )
         
         self._file_download_control = ClientGUIControls.NetworkJobControl( self._url_panel )
         
@@ -3381,14 +3617,17 @@ class ManagementPanelImporterURLs( ManagementPanelImporter ):
         
         self._UpdateImportStatus()
         
-        HG.client_controller.sub( self, 'PendURL', 'pend_url' )
-        
     
-    def _PendURLs( self, urls ):
+    def _PendURLs( self, urls, service_keys_to_tags = None ):
+        
+        if service_keys_to_tags is None:
+            
+            service_keys_to_tags = ClientTags.ServiceKeysToTags()
+            
         
         urls = [ url for url in urls if url.startswith( 'http' ) ]
         
-        self._urls_import.PendURLs( urls )
+        self._urls_import.PendURLs( urls, service_keys_to_tags )
         
         self._UpdateImportStatus()
         
@@ -3399,11 +3638,11 @@ class ManagementPanelImporterURLs( ManagementPanelImporter ):
         
         if paused:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.play )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.play )
             
         else:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.pause )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.pause )
             
         
         ( file_network_job, gallery_network_job ) = self._urls_import.GetNetworkJobs()
@@ -3421,19 +3660,21 @@ class ManagementPanelImporterURLs( ManagementPanelImporter ):
             
         
     
-    def EventPause( self, event ):
+    def Pause( self ):
         
         self._urls_import.PausePlay()
         
         self._UpdateImportStatus()
         
     
-    def PendURL( self, page_key, url ):
+    def PendURL( self, url, service_keys_to_tags = None ):
         
-        if page_key == self._page_key:
+        if service_keys_to_tags is None:
             
-            self._PendURLs( ( url, ) )
+            service_keys_to_tags = ClientTags.ServiceKeysToTags()
             
+        
+        self._PendURLs( ( url, ), service_keys_to_tags )
         
     
     def SetSearchFocus( self ):
@@ -3651,7 +3892,7 @@ class ManagementPanelPetitions( ManagementPanel ):
                 self._contents.Append( content_string, content )
                 
             
-            self._contents.SetChecked( range( self._contents.GetCount() ) )
+            self._contents.SetCheckedItems( list( range( self._contents.GetCount() ) ) )
             
             self._process.Enable()
             
@@ -3737,7 +3978,7 @@ class ManagementPanelPetitions( ManagementPanel ):
                 
             
         
-        self._refresh_num_petitions_button.SetLabelText( u'Fetching\u2026' )
+        self._refresh_num_petitions_button.SetLabelText( 'Fetching\u2026' )
         
         self._controller.CallToThread( do_it, self._service )
         
@@ -3791,7 +4032,7 @@ class ManagementPanelPetitions( ManagementPanel ):
             
         
         button.Disable()
-        button.SetLabelText( u'Fetching\u2026' )
+        button.SetLabelText( 'Fetching\u2026' )
         
         self._controller.CallToThread( do_it, self._service )
         
@@ -3847,21 +4088,25 @@ class ManagementPanelPetitions( ManagementPanel ):
             
             chunks_of_approved_contents = []
             chunk_of_approved_contents = []
+            
             weight = 0
             
             for content in approved_contents:
                 
-                chunk_of_approved_contents.append( content )
-                
-                weight += content.GetVirtualWeight()
-                
-                if weight > 50:
+                for content_chunk in content.IterateUploadableChunks(): # break 20K-strong mappings petitions into smaller bits to POST back
                     
-                    chunks_of_approved_contents.append( chunk_of_approved_contents )
+                    chunk_of_approved_contents.append( content_chunk )
                     
-                    chunk_of_approved_contents = []
+                    weight += content.GetVirtualWeight()
                     
-                    weight = 0
+                    if weight > 50:
+                        
+                        chunks_of_approved_contents.append( chunk_of_approved_contents )
+                        
+                        chunk_of_approved_contents = []
+                        
+                        weight = 0
+                        
                     
                 
             
@@ -3889,7 +4134,7 @@ class ManagementPanelPetitions( ManagementPanel ):
                     
                     job_key = ClientThreading.JobKey( cancellable = True )
                     
-                    job_key.SetVariable( 'popup_title', 'comitting petitions' )
+                    job_key.SetVariable( 'popup_title', 'committing petitions' )
                     
                     HG.client_controller.pub( 'message', job_key )
                     
@@ -3899,6 +4144,8 @@ class ManagementPanelPetitions( ManagementPanel ):
                     
                 
                 chunks_of_approved_contents = break_approved_contents_into_chunks( approved_contents )
+                
+                num_approved_to_do = len( chunks_of_approved_contents )
                 
                 for chunk_of_approved_contents in chunks_of_approved_contents:
                     
@@ -3911,7 +4158,7 @@ class ManagementPanelPetitions( ManagementPanel ):
                             return
                             
                         
-                        job_key.SetVariable( 'popup_gauge_1', ( num_done, num_to_do ) )
+                        job_key.SetVariable( 'popup_gauge_1', ( num_done, num_approved_to_do ) )
                         
                     
                     ( update, content_updates ) = petition.GetApproval( chunk_of_approved_contents )
@@ -3920,7 +4167,7 @@ class ManagementPanelPetitions( ManagementPanel ):
                     
                     controller.WriteSynchronous( 'content_updates', { petition_service_key : content_updates } )
                     
-                    num_done += len( chunk_of_approved_contents )
+                    num_done += 1
                     
                 
                 if len( denied_contents ) > 0:
@@ -4195,9 +4442,26 @@ class ManagementPanelQuery( ManagementPanel ):
             
         
     
+    def CleanBeforeClose( self ):
+        
+        ManagementPanel.CleanBeforeClose( self )
+        
+        if self._search_enabled:
+            
+            self._searchbox.CancelCurrentResultsFetchJob()
+            
+        
+        self._query_job_key.Cancel()
+        
+    
     def CleanBeforeDestroy( self ):
         
         ManagementPanel.CleanBeforeDestroy( self )
+        
+        if self._search_enabled:
+            
+            self._searchbox.CancelCurrentResultsFetchJob()
+            
         
         self._query_job_key.Cancel()
         
@@ -4284,7 +4548,9 @@ class ManagementPanelQuery( ManagementPanel ):
         
         QUERY_CHUNK_SIZE = 256
         
-        query_hash_ids = controller.Read( 'file_query_ids', search_context, query_job_key )
+        HG.client_controller.file_viewing_stats_manager.Flush()
+        
+        query_hash_ids = controller.Read( 'file_query_ids', search_context, job_key = query_job_key )
         
         if query_job_key.IsCancelled():
             

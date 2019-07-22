@@ -1,18 +1,19 @@
-import ClientConstants as CC
-import ClientData
-import ClientFiles
-import ClientImporting
-import ClientImportFileSeeds
-import ClientImportOptions
-import ClientPaths
-import ClientThreading
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusPaths
-import HydrusSerialisable
-import HydrusThreading
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientFiles
+from . import ClientImporting
+from . import ClientImportFileSeeds
+from . import ClientImportOptions
+from . import ClientPaths
+from . import ClientTags
+from . import ClientThreading
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusPaths
+from . import HydrusSerialisable
+from . import HydrusThreading
 import os
 import threading
 import time
@@ -21,9 +22,9 @@ class HDDImport( HydrusSerialisable.SerialisableBase ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_HDD_IMPORT
     SERIALISABLE_NAME = 'Local File Import'
-    SERIALISABLE_VERSION = 1
+    SERIALISABLE_VERSION = 2
     
-    def __init__( self, paths = None, file_import_options = None, paths_to_tags = None, delete_after_success = None ):
+    def __init__( self, paths = None, file_import_options = None, paths_to_service_keys_to_tags = None, delete_after_success = None ):
         
         HydrusSerialisable.SerialisableBase.__init__( self )
         
@@ -52,6 +53,11 @@ class HDDImport( HydrusSerialisable.SerialisableBase ):
                     pass
                     
                 
+                if path in paths_to_service_keys_to_tags:
+                    
+                    file_seed.SetFixedServiceKeysToTags( paths_to_service_keys_to_tags[ path ] )
+                    
+                
                 file_seeds.append( file_seed )
                 
             
@@ -59,7 +65,6 @@ class HDDImport( HydrusSerialisable.SerialisableBase ):
             
         
         self._file_import_options = file_import_options
-        self._paths_to_tags = paths_to_tags
         self._delete_after_success = delete_after_success
         
         self._current_action = ''
@@ -76,18 +81,44 @@ class HDDImport( HydrusSerialisable.SerialisableBase ):
         
         serialisable_file_seed_cache = self._file_seed_cache.GetSerialisableTuple()
         serialisable_options = self._file_import_options.GetSerialisableTuple()
-        serialisable_paths_to_tags = { path : { service_key.encode( 'hex' ) : tags for ( service_key, tags ) in service_keys_to_tags.items() } for ( path, service_keys_to_tags ) in self._paths_to_tags.items() }
         
-        return ( serialisable_file_seed_cache, serialisable_options, serialisable_paths_to_tags, self._delete_after_success, self._paused )
+        return ( serialisable_file_seed_cache, serialisable_options, self._delete_after_success, self._paused )
         
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
-        ( serialisable_file_seed_cache, serialisable_options, serialisable_paths_to_tags, self._delete_after_success, self._paused ) = serialisable_info
+        ( serialisable_file_seed_cache, serialisable_options, self._delete_after_success, self._paused ) = serialisable_info
         
         self._file_seed_cache = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_file_seed_cache )
         self._file_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_options )
-        self._paths_to_tags = { path : { service_key.decode( 'hex' ) : tags for ( service_key, tags ) in service_keys_to_tags.items() } for ( path, service_keys_to_tags ) in serialisable_paths_to_tags.items() }
+        
+    
+    def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
+        
+        if version == 1:
+            
+            ( serialisable_file_seed_cache, serialisable_options, serialisable_paths_to_tags, delete_after_success, paused ) = old_serialisable_info
+            
+            file_seed_cache = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_file_seed_cache )
+            
+            paths_to_service_keys_to_tags = { path : { bytes.fromhex( service_key ) : tags for ( service_key, tags ) in service_keys_to_tags.items() } for ( path, service_keys_to_tags ) in serialisable_paths_to_tags.items() }
+            
+            for file_seed in file_seed_cache.GetFileSeeds():
+                
+                path = file_seed.file_seed_data
+                
+                if path in paths_to_service_keys_to_tags:
+                    
+                    file_seed.SetFixedServiceKeysToTags( paths_to_service_keys_to_tags[ path ] )
+                    
+                
+            
+            serialisable_file_seed_cache = file_seed_cache.GetSerialisableTuple()
+            
+            new_serialisable_info = ( serialisable_file_seed_cache, serialisable_options, delete_after_success, paused )
+            
+            return ( 2, new_serialisable_info )
+            
         
     
     def _WorkOnFiles( self, page_key ):
@@ -105,18 +136,6 @@ class HDDImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            if path in self._paths_to_tags:
-                
-                service_keys_to_tags = self._paths_to_tags[ path ]
-                
-            else:
-                
-                service_keys_to_tags = {}
-                
-            
-        
-        with self._lock:
-            
             self._current_action = 'importing'
             
         
@@ -125,20 +144,6 @@ class HDDImport( HydrusSerialisable.SerialisableBase ):
         did_substantial_work = True
         
         if file_seed.status in CC.SUCCESSFUL_IMPORT_STATES:
-            
-            if file_seed.HasHash():
-                
-                hash = file_seed.GetHash()
-                
-                service_keys_to_content_updates = ClientData.ConvertServiceKeysToTagsToServiceKeysToContentUpdates( { hash }, service_keys_to_tags )
-                
-                if len( service_keys_to_content_updates ) > 0:
-                    
-                    HG.client_controller.WriteSynchronous( 'content_updates', service_keys_to_content_updates )
-                    
-                    did_substantial_work = True
-                    
-                
             
             if file_seed.ShouldPresent( self._file_import_options ):
                 
@@ -255,6 +260,8 @@ class HDDImport( HydrusSerialisable.SerialisableBase ):
     def Start( self, page_key ):
         
         self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles, page_key )
+        
+        self._files_repeating_job.SetThreadSlotType( 'misc' )
         
     
     def REPEATINGWorkOnFiles( self, page_key ):
@@ -390,7 +397,7 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
                     
                     try:
                         
-                        if os.path.exists( path ):
+                        if os.path.exists( path ) and not os.path.isdir( path ):
                             
                             ClientPaths.DeletePath( path )
                             
@@ -406,15 +413,7 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
                         
                     except Exception as e:
                         
-                        HydrusData.ShowText( 'Import folder tried to delete ' + path + ', but could not:' )
-                        
-                        HydrusData.ShowException( e )
-                        
-                        HydrusData.ShowText( 'Import folder has been paused.' )
-                        
-                        self._paused = True
-                        
-                        return
+                        raise Exception( 'Tried to delete "{}", but could not.'.format( path ) )
                         
                     
                 
@@ -437,10 +436,10 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
                         
                         if not os.path.exists( dest_dir ):
                             
-                            raise HydrusExceptions.DataMissing( 'The move location "' + dest_dir + '" does not exist!' )
+                            raise Exception( 'Tried to move "{}" to "{}", but the destination directory did not exist.'.format( path, dest_dir ) )
                             
                         
-                        if os.path.exists( path ):
+                        if os.path.exists( path ) and not os.path.isdir( path ):
                             
                             filename = os.path.basename( path )
                             
@@ -489,11 +488,7 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
     
     def _CheckFolder( self, job_key ):
         
-        filenames = os.listdir( HydrusData.ToUnicode( self._path ) )
-        
-        raw_paths = [ os.path.join( self._path, filename ) for filename in filenames ]
-        
-        all_paths = ClientFiles.GetAllPaths( raw_paths )
+        all_paths = ClientFiles.GetAllFilePaths( [ self._path ] )
         
         all_paths = HydrusPaths.FilterFreePaths( all_paths )
         
@@ -531,12 +526,12 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
         
         serialisable_file_import_options = self._file_import_options.GetSerialisableTuple()
         serialisable_tag_import_options = self._tag_import_options.GetSerialisableTuple()
-        serialisable_tag_service_keys_to_filename_tagging_options = [ ( service_key.encode( 'hex' ), filename_tagging_options.GetSerialisableTuple() ) for ( service_key, filename_tagging_options ) in self._tag_service_keys_to_filename_tagging_options.items() ]
+        serialisable_tag_service_keys_to_filename_tagging_options = [ ( service_key.hex(), filename_tagging_options.GetSerialisableTuple() ) for ( service_key, filename_tagging_options ) in list(self._tag_service_keys_to_filename_tagging_options.items()) ]
         serialisable_file_seed_cache = self._file_seed_cache.GetSerialisableTuple()
         
         # json turns int dict keys to strings
-        action_pairs = self._actions.items()
-        action_location_pairs = self._action_locations.items()
+        action_pairs = list(self._actions.items())
+        action_location_pairs = list(self._action_locations.items())
         
         return ( self._path, self._mimes, serialisable_file_import_options, serialisable_tag_import_options, serialisable_tag_service_keys_to_filename_tagging_options, action_pairs, action_location_pairs, self._period, self._check_regularly, serialisable_file_seed_cache, self._last_checked, self._paused, self._check_now, self._show_working_popup, self._publish_files_to_popup_button, self._publish_files_to_page )
         
@@ -608,9 +603,9 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
                             
                         
                     
-                    service_keys_to_tags = {}
+                    service_keys_to_tags = ClientTags.ServiceKeysToTags()
                     
-                    for ( tag_service_key, filename_tagging_options ) in self._tag_service_keys_to_filename_tagging_options.items():
+                    for ( tag_service_key, filename_tagging_options ) in list(self._tag_service_keys_to_filename_tagging_options.items()):
                         
                         if not HG.client_controller.services_manager.ServiceExists( tag_service_key ):
                             
@@ -691,7 +686,7 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
         
         self._file_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_file_import_options )
         self._tag_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_import_options )
-        self._tag_service_keys_to_filename_tagging_options = dict( [ ( encoded_service_key.decode( 'hex' ), HydrusSerialisable.CreateFromSerialisableTuple( serialisable_filename_tagging_options ) ) for ( encoded_service_key, serialisable_filename_tagging_options ) in serialisable_tag_service_keys_to_filename_tagging_options ] )
+        self._tag_service_keys_to_filename_tagging_options = dict( [ ( bytes.fromhex( encoded_service_key ), HydrusSerialisable.CreateFromSerialisableTuple( serialisable_filename_tagging_options ) ) for ( encoded_service_key, serialisable_filename_tagging_options ) in serialisable_tag_service_keys_to_filename_tagging_options ] )
         self._file_seed_cache = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_file_seed_cache )
         
     
@@ -738,7 +733,7 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
             
             ( path, mimes, serialisable_file_import_options, serialisable_tag_import_options, serialisable_txt_parse_tag_service_keys, action_pairs, action_location_pairs, period, open_popup, serialisable_file_seed_cache, last_checked, paused, check_now ) = old_serialisable_info
             
-            txt_parse_tag_service_keys = [ service_key.decode( 'hex' ) for service_key in serialisable_txt_parse_tag_service_keys ]
+            txt_parse_tag_service_keys = [ bytes.fromhex( service_key ) for service_key in serialisable_txt_parse_tag_service_keys ]
             
             tag_service_keys_to_filename_tagging_options = {}
             
@@ -751,7 +746,7 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
                 tag_service_keys_to_filename_tagging_options[ service_key ] = filename_tagging_options
                 
             
-            serialisable_tag_service_keys_to_filename_tagging_options = [ ( service_key.encode( 'hex' ), filename_tagging_options.GetSerialisableTuple() ) for ( service_key, filename_tagging_options ) in tag_service_keys_to_filename_tagging_options.items() ]
+            serialisable_tag_service_keys_to_filename_tagging_options = [ ( service_key.hex(), filename_tagging_options.GetSerialisableTuple() ) for ( service_key, filename_tagging_options ) in list(tag_service_keys_to_filename_tagging_options.items()) ]
             
             new_serialisable_info = ( path, mimes, serialisable_file_import_options, serialisable_tag_import_options, serialisable_tag_service_keys_to_filename_tagging_options, action_pairs, action_location_pairs, period, open_popup, serialisable_file_seed_cache, last_checked, paused, check_now )
             
@@ -775,6 +770,7 @@ class ImportFolder( HydrusSerialisable.SerialisableBaseNamed ):
     
     def CheckNow( self ):
         
+        self._paused = False
         self._check_now = True
         
     

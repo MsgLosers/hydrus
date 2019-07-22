@@ -1,19 +1,186 @@
-import ClientConstants as CC
-import ClientData
-import ClientGUICommon
-import ClientGUIControls
-import ClientGUIOptionsPanels
-import ClientRatings
-import ClientSearch
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientGUICommon
+from . import ClientGUIControls
+from . import ClientGUIOptionsPanels
+from . import ClientGUIScrolledPanels
+from . import ClientGUIShortcuts
+from . import ClientGUITime
+from . import ClientRatings
+from . import ClientSearch
 import datetime
-import HydrusConstants as HC
-import HydrusData
-import HydrusGlobals as HG
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusGlobals as HG
+from . import HydrusText
 import re
 import string
 import wx
 import wx.adv
 
+class InputFileSystemPredicate( ClientGUIScrolledPanels.EditPanel ):
+    
+    def __init__( self, parent, predicate_type ):
+        
+        ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
+        
+        self._predicates = []
+        
+        pred_classes = []
+        
+        if predicate_type == HC.PREDICATE_TYPE_SYSTEM_AGE:
+            
+            pred_classes.append( PanelPredicateSystemAgeDelta )
+            pred_classes.append( PanelPredicateSystemAgeDate )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_DIMENSIONS:
+            
+            pred_classes.append( PanelPredicateSystemHeight )
+            pred_classes.append( PanelPredicateSystemWidth )
+            pred_classes.append( PanelPredicateSystemRatio )
+            pred_classes.append( PanelPredicateSystemNumPixels )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_DURATION:
+            
+            pred_classes.append( PanelPredicateSystemDuration )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_FILE_SERVICE:
+            
+            pred_classes.append( PanelPredicateSystemFileService )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_KNOWN_URLS:
+            
+            pred_classes.append( PanelPredicateSystemKnownURLsExactURL )
+            pred_classes.append( PanelPredicateSystemKnownURLsDomain )
+            pred_classes.append( PanelPredicateSystemKnownURLsRegex )
+            pred_classes.append( PanelPredicateSystemKnownURLsURLClass )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_HASH:
+            
+            pred_classes.append( PanelPredicateSystemHash )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_LIMIT:
+            
+            pred_classes.append( PanelPredicateSystemLimit )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_MIME:
+            
+            pred_classes.append( PanelPredicateSystemMime )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_NUM_TAGS:
+            
+            pred_classes.append( PanelPredicateSystemNumTags )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_NUM_WORDS:
+            
+            pred_classes.append( PanelPredicateSystemNumWords )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_RATING:
+            
+            services_manager = HG.client_controller.services_manager
+            
+            ratings_services = services_manager.GetServices( ( HC.LOCAL_RATING_LIKE, HC.LOCAL_RATING_NUMERICAL ) )
+            
+            if len( ratings_services ) > 0:
+                
+                pred_classes.append( PanelPredicateSystemRating )
+                
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_SIMILAR_TO:
+            
+            pred_classes.append( PanelPredicateSystemSimilarTo )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_SIZE:
+            
+            pred_classes.append( PanelPredicateSystemSize )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_TAG_AS_NUMBER:
+            
+            pred_classes.append( PanelPredicateSystemTagAsNumber )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_DUPLICATE_RELATIONSHIP_COUNT:
+            
+            pred_classes.append( PanelPredicateSystemDuplicateRelationships )
+            
+        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_FILE_VIEWING_STATS:
+            
+            pred_classes.append( PanelPredicateSystemFileViewingStatsViews )
+            pred_classes.append( PanelPredicateSystemFileViewingStatsViewtime )
+            
+        
+        vbox = wx.BoxSizer( wx.VERTICAL )
+        
+        for pred_class in pred_classes:
+            
+            panel = self._Panel( self, pred_class )
+            
+            vbox.Add( panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+            
+        
+        self.SetSizer( vbox )
+        
+    
+    def GetValue( self ):
+        
+        return self._predicates
+        
+    
+    def SubPanelOK( self, predicates ):
+        
+        self._predicates = predicates
+        
+        self.GetParent().DoOK()
+        
+    
+    class _Panel( wx.Panel ):
+        
+        def __init__( self, parent, predicate_class ):
+            
+            wx.Panel.__init__( self, parent )
+            
+            self._predicate_panel = predicate_class( self )
+            
+            self._ok = wx.Button( self, id = wx.ID_OK, label = 'OK' )
+            self._ok.Bind( wx.EVT_BUTTON, self.EventOK )
+            self._ok.SetForegroundColour( ( 0, 128, 0 ) )
+            
+            hbox = wx.BoxSizer( wx.HORIZONTAL )
+            
+            hbox.Add( self._predicate_panel, CC.FLAGS_EXPAND_SIZER_BOTH_WAYS )
+            hbox.Add( self._ok, CC.FLAGS_VCENTER )
+            
+            self.SetSizer( hbox )
+            
+            self.Bind( wx.EVT_CHAR_HOOK, self.EventCharHook )
+            
+        
+        def _DoOK( self ):
+            
+            predicates = self._predicate_panel.GetPredicates()
+            
+            self.GetParent().SubPanelOK( predicates )
+            
+        
+        def EventCharHook( self, event ):
+            
+            ( modifier, key ) = ClientGUIShortcuts.ConvertKeyEventToSimpleTuple( event )
+            
+            if key in ( wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER ):
+                
+                self._DoOK()
+                
+            else:
+                
+                event.Skip()
+                
+            
+        
+        def EventOK( self, event ):
+            
+            self._DoOK()
+            
+        
+    
 class PanelPredicateSystem( wx.Panel ):
     
     PREDICATE_TYPE = None
@@ -40,7 +207,7 @@ class PanelPredicateSystemAgeDate( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '<', u'\u2248', '=', '>' ] )
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
         
         self._date = wx.adv.CalendarCtrl( self )
         
@@ -82,7 +249,7 @@ class PanelPredicateSystemAgeDelta( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '<', u'\u2248', '>' ] )
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '>' ] )
         
         self._years = wx.SpinCtrl( self, max = 30, size = ( 60, -1 ) )
         self._months = wx.SpinCtrl( self, max = 60, size = ( 60, -1 ) )
@@ -140,19 +307,19 @@ class PanelPredicateSystemAgeDelta( PanelPredicateSystem ):
     
 class PanelPredicateSystemDuplicateRelationships( PanelPredicateSystem ):
     
-    PREDICATE_TYPE = HC.PREDICATE_TYPE_SYSTEM_DUPLICATE_RELATIONSHIPS
+    PREDICATE_TYPE = HC.PREDICATE_TYPE_SYSTEM_DUPLICATE_RELATIONSHIP_COUNT
     
     def __init__( self, parent ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        choices = [ '<', u'\u2248', '=', '>' ]
+        choices = [ '<', '\u2248', '=', '>' ]
         
         self._sign = wx.RadioBox( self, choices = choices, style = wx.RA_SPECIFY_COLS )
         
         self._num = wx.SpinCtrl( self, min = 0, max = 65535 )
         
-        choices = [ ( HC.duplicate_type_string_lookup[ status ], status ) for status in ( HC.DUPLICATE_BETTER_OR_WORSE, HC.DUPLICATE_BETTER, HC.DUPLICATE_WORSE, HC.DUPLICATE_SAME_QUALITY, HC.DUPLICATE_ALTERNATE, HC.DUPLICATE_NOT_DUPLICATE, HC.DUPLICATE_UNKNOWN ) ]
+        choices = [ ( HC.duplicate_type_string_lookup[ status ], status ) for status in ( HC.DUPLICATE_MEMBER, HC.DUPLICATE_ALTERNATE, HC.DUPLICATE_FALSE_POSITIVE, HC.DUPLICATE_POTENTIAL ) ]
         
         self._dupe_type = ClientGUICommon.BetterRadioBox( self, choices = choices, style = wx.RA_SPECIFY_ROWS )
         
@@ -190,7 +357,7 @@ class PanelPredicateSystemDuration( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        choices = [ '<', u'\u2248', '=', '>' ]
+        choices = [ '<', '\u2248', '=', '>' ]
         
         self._sign = wx.RadioBox( self, choices = choices, style = wx.RA_SPECIFY_COLS )
         
@@ -201,7 +368,7 @@ class PanelPredicateSystemDuration( PanelPredicateSystem ):
         
         ( sign, ms ) = system_predicates[ 'duration' ]
         
-        s = ms / 1000
+        s = ms // 1000
         
         ms = ms % 1000
         
@@ -268,6 +435,112 @@ class PanelPredicateSystemFileService( PanelPredicateSystem ):
         return info
         
     
+class PanelPredicateSystemFileViewingStatsViews( PanelPredicateSystem ):
+    
+    PREDICATE_TYPE = HC.PREDICATE_TYPE_SYSTEM_FILE_VIEWING_STATS
+    
+    def __init__( self, parent ):
+        
+        PanelPredicateSystem.__init__( self, parent )
+        
+        self._viewing_locations = ClientGUICommon.BetterCheckListBox( self )
+        
+        self._viewing_locations.Append( 'media views', 'media' )
+        self._viewing_locations.Append( 'preview views', 'preview' )
+        
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
+        
+        self._value = wx.SpinCtrl( self, min = 0, max = 1000000 )
+        
+        #
+        
+        self._viewing_locations.Check( 0 )
+        
+        self._sign.Select( 3 )
+        
+        self._value.SetValue( 10 )
+        
+        hbox = wx.BoxSizer( wx.HORIZONTAL )
+        
+        hbox.Add( ClientGUICommon.BetterStaticText( self, 'system:' ), CC.FLAGS_VCENTER )
+        hbox.Add( self._viewing_locations, CC.FLAGS_VCENTER )
+        hbox.Add( self._sign, CC.FLAGS_VCENTER )
+        hbox.Add( self._value, CC.FLAGS_VCENTER )
+        
+        self.SetSizer( hbox )
+        
+    
+    def GetInfo( self ):
+        
+        viewing_locations = self._viewing_locations.GetChecked()
+        
+        if len( viewing_locations ) == 0:
+            
+            viewing_locations = [ 'media' ]
+            
+        
+        sign = self._sign.GetStringSelection()
+        
+        value = self._value.GetValue()
+        
+        info = ( 'views', tuple( viewing_locations ), sign, value )
+        
+        return info
+        
+    
+class PanelPredicateSystemFileViewingStatsViewtime( PanelPredicateSystem ):
+    
+    PREDICATE_TYPE = HC.PREDICATE_TYPE_SYSTEM_FILE_VIEWING_STATS
+    
+    def __init__( self, parent ):
+        
+        PanelPredicateSystem.__init__( self, parent )
+        
+        self._viewing_locations = ClientGUICommon.BetterCheckListBox( self )
+        
+        self._viewing_locations.Append( 'media viewtime', 'media' )
+        self._viewing_locations.Append( 'preview viewtime', 'preview' )
+        
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
+        
+        self._time_delta = ClientGUITime.TimeDeltaCtrl( self, min = 0, days = True, hours = True, minutes = True, seconds = True )
+        
+        #
+        
+        self._viewing_locations.Check( 0 )
+        
+        self._sign.Select( 3 )
+        
+        self._time_delta.SetValue( 600 )
+        
+        hbox = wx.BoxSizer( wx.HORIZONTAL )
+        
+        hbox.Add( ClientGUICommon.BetterStaticText( self, 'system:' ), CC.FLAGS_VCENTER )
+        hbox.Add( self._viewing_locations, CC.FLAGS_VCENTER )
+        hbox.Add( self._sign, CC.FLAGS_VCENTER )
+        hbox.Add( self._time_delta, CC.FLAGS_VCENTER )
+        
+        self.SetSizer( hbox )
+        
+    
+    def GetInfo( self ):
+        
+        viewing_locations = self._viewing_locations.GetChecked()
+        
+        if len( viewing_locations ) == 0:
+            
+            viewing_locations = [ 'media' ]
+            
+        
+        sign = self._sign.GetStringSelection()
+        
+        time_delta = self._time_delta.GetValue()
+        
+        info = ( 'viewtime', tuple( viewing_locations ), sign, time_delta )
+        
+        return info
+        
+    
 class PanelPredicateSystemHash( PanelPredicateSystem ):
     
     PREDICATE_TYPE = HC.PREDICATE_TYPE_SYSTEM_HASH
@@ -297,17 +570,20 @@ class PanelPredicateSystemHash( PanelPredicateSystem ):
     
     def GetInfo( self ):
         
-        def hex_filter( c ):
+        hex_hash = self._hash.GetValue().lower()
+        
+        hex_hash = HydrusText.HexFilter( hex_hash )
+        
+        if len( hex_hash ) == 0:
             
-            return c in string.hexdigits
+            hex_hash = '00'
+            
+        elif len( hex_hash ) % 2 == 1:
+            
+            hex_hash += '0' # since we are later decoding to byte
             
         
-        hash = filter( hex_filter, self._hash.GetValue().lower() )
-        
-        if len( hash ) == 0: hash = '00'
-        elif len( hash ) % 2 == 1: hash += '0' # since we are later decoding to byte
-        
-        hash = hash.decode( 'hex' )
+        hash = bytes.fromhex( hex_hash )
         
         hash_type = self._hash_type.GetStringSelection()
         
@@ -322,7 +598,7 @@ class PanelPredicateSystemHeight( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '<', u'\u2248', '=', '>' ] )
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
         
         self._height = wx.SpinCtrl( self, max = 200000, size = ( 60, -1 ) )
         
@@ -501,7 +777,7 @@ class PanelPredicateSystemKnownURLsRegex( PanelPredicateSystem ):
         return ( operator, rule_type, rule, description )
         
     
-class PanelPredicateSystemKnownURLsURLMatch( PanelPredicateSystem ):
+class PanelPredicateSystemKnownURLsURLClass( PanelPredicateSystem ):
     
     PREDICATE_TYPE = HC.PREDICATE_TYPE_SYSTEM_KNOWN_URLS
     
@@ -514,13 +790,13 @@ class PanelPredicateSystemKnownURLsURLMatch( PanelPredicateSystem ):
         self._operator.Append( 'has', True )
         self._operator.Append( 'does not have', False )
         
-        self._url_matches = ClientGUICommon.BetterChoice( self )
+        self._url_classes = ClientGUICommon.BetterChoice( self )
         
-        for url_match in HG.client_controller.network_engine.domain_manager.GetURLMatches():
+        for url_class in HG.client_controller.network_engine.domain_manager.GetURLClasses():
             
-            if url_match.ShouldAssociateWithFiles():
+            if url_class.ShouldAssociateWithFiles():
                 
-                self._url_matches.Append( url_match.GetName(), url_match )
+                self._url_classes.Append( url_class.GetName(), url_class )
                 
             
         
@@ -529,7 +805,7 @@ class PanelPredicateSystemKnownURLsURLMatch( PanelPredicateSystem ):
         hbox.Add( ClientGUICommon.BetterStaticText( self, 'system:known url' ), CC.FLAGS_VCENTER )
         hbox.Add( self._operator, CC.FLAGS_VCENTER )
         hbox.Add( ClientGUICommon.BetterStaticText( self, 'url matching this class:' ), CC.FLAGS_VCENTER )
-        hbox.Add( self._url_matches, CC.FLAGS_VCENTER )
+        hbox.Add( self._url_classes, CC.FLAGS_VCENTER )
         
         self.SetSizer( hbox )
         
@@ -547,13 +823,13 @@ class PanelPredicateSystemKnownURLsURLMatch( PanelPredicateSystem ):
             operator_description = 'does not have '
             
         
-        rule_type = 'url_match'
+        rule_type = 'url_class'
         
-        url_match = self._url_matches.GetChoice()
+        url_class = self._url_classes.GetChoice()
         
-        rule = url_match
+        rule = url_class
         
-        description = operator_description + url_match.GetName() + ' url'
+        description = operator_description + url_class.GetName() + ' url'
         
         return ( operator, rule_type, rule, description )
         
@@ -614,7 +890,7 @@ class PanelPredicateSystemMime( PanelPredicateSystem ):
         
         hbox = wx.BoxSizer( wx.HORIZONTAL )
         
-        hbox.Add( ClientGUICommon.BetterStaticText( self, 'system:mime' ), CC.FLAGS_VCENTER )
+        hbox.Add( ClientGUICommon.BetterStaticText( self, 'system:filetype' ), CC.FLAGS_VCENTER )
         hbox.Add( self._mimes, CC.FLAGS_VCENTER )
         
         self.SetSizer( hbox )
@@ -635,7 +911,7 @@ class PanelPredicateSystemNumPixels( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '<', u'\u2248', '=', '>' ] )
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
         
         self._num_pixels = wx.SpinCtrl( self, max = 1048576, size = ( 60, -1 ) )
         
@@ -678,7 +954,7 @@ class PanelPredicateSystemNumTags( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '<', u'\u2248', '=', '>' ] )
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
         
         self._num_tags = wx.SpinCtrl( self, max = 2000, size = ( 60, -1 ) )
         
@@ -716,7 +992,7 @@ class PanelPredicateSystemNumWords( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '<', u'\u2248', '=', '>' ] )
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
         
         self._num_words = wx.SpinCtrl( self, max = 1000000, size = ( 60, -1 ) )
         
@@ -801,7 +1077,7 @@ class PanelPredicateSystemRating( PanelPredicateSystem ):
             
             rated_checkbox = wx.CheckBox( self, label = 'rated' )
             not_rated_checkbox = wx.CheckBox( self, label = 'not rated' )
-            choice = wx.RadioBox( self, choices = [ '>', '<', '=', u'\u2248' ] )
+            choice = wx.RadioBox( self, choices = [ '>', '<', '=', '\u2248' ] )
             rating_ctrl = ClientGUICommon.RatingNumericalDialog( self, service_key )
             
             choice.SetSelection( 2 )
@@ -832,7 +1108,7 @@ class PanelPredicateSystemRating( PanelPredicateSystem ):
         
         #
         
-        for ( checkbox, ( service_key, rating_state ) ) in self._like_checkboxes_to_info.items():
+        for ( checkbox, ( service_key, rating_state ) ) in list(self._like_checkboxes_to_info.items()):
             
             if checkbox.GetValue() == True:
                 
@@ -872,7 +1148,7 @@ class PanelPredicateSystemRating( PanelPredicateSystem ):
         
         #
         
-        for ( checkbox, ( service_key, rating_state ) ) in self._numerical_checkboxes_to_info.items():
+        for ( checkbox, ( service_key, rating_state ) ) in list(self._numerical_checkboxes_to_info.items()):
             
             if checkbox.GetValue() == True:
                 
@@ -889,7 +1165,7 @@ class PanelPredicateSystemRating( PanelPredicateSystem ):
                 
             
         
-        for ( ctrl, choice ) in self._numerical_rating_ctrls_to_info.items():
+        for ( ctrl, choice ) in list(self._numerical_rating_ctrls_to_info.items()):
             
             rating_state = ctrl.GetRatingState()
             
@@ -927,7 +1203,7 @@ class PanelPredicateSystemRatio( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '=', 'wider than', 'taller than', u'\u2248' ] )
+        self._sign = wx.RadioBox( self, choices = [ '=', 'wider than', 'taller than', '\u2248' ] )
         
         self._width = wx.SpinCtrl( self, max = 50000, size = ( 60, -1 ) )
         
@@ -987,7 +1263,7 @@ class PanelPredicateSystemSimilarTo( PanelPredicateSystem ):
         
         hbox.Add( ClientGUICommon.BetterStaticText( self, 'system:similar_to' ), CC.FLAGS_VCENTER )
         hbox.Add( self._hash, CC.FLAGS_VCENTER )
-        hbox.Add( wx.StaticText( self, label=u'\u2248' ), CC.FLAGS_VCENTER )
+        hbox.Add( wx.StaticText( self, label='\u2248' ), CC.FLAGS_VCENTER )
         hbox.Add( self._max_hamming, CC.FLAGS_VCENTER )
         
         self.SetSizer( hbox )
@@ -997,17 +1273,20 @@ class PanelPredicateSystemSimilarTo( PanelPredicateSystem ):
     
     def GetInfo( self ):
         
-        def hex_filter( c ):
+        hex_hash = self._hash.GetValue()
+        
+        hex_hash = HydrusText.HexFilter( hex_hash )
+        
+        if len( hex_hash ) == 0:
             
-            return c in string.hexdigits
+            hex_hash = '00'
+            
+        elif len( hex_hash ) % 2 == 1:
+            
+            hex_hash += '0' # since we are later decoding to byte
             
         
-        hash = filter( hex_filter, self._hash.GetValue().lower() )
-        
-        if len( hash ) == 0: hash = '00'
-        elif len( hash ) % 2 == 1: hash += '0' # since we are later decoding to byte
-        
-        info = ( hash.decode( 'hex' ), self._max_hamming.GetValue() )
+        info = ( bytes.fromhex( hex_hash ), self._max_hamming.GetValue() )
         
         return info
         
@@ -1020,7 +1299,7 @@ class PanelPredicateSystemSize( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '<', u'\u2248', '=', '>' ] )
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
         
         self._bytes = ClientGUIControls.BytesControl( self )
         
@@ -1062,7 +1341,7 @@ class PanelPredicateSystemTagAsNumber( PanelPredicateSystem ):
         
         self._namespace = wx.TextCtrl( self )
         
-        choices = [ '<', u'\u2248', '>' ]
+        choices = [ '<', '\u2248', '>' ]
         
         self._sign = wx.RadioBox( self, choices = choices, style = wx.RA_SPECIFY_COLS )
         
@@ -1103,7 +1382,7 @@ class PanelPredicateSystemWidth( PanelPredicateSystem ):
         
         PanelPredicateSystem.__init__( self, parent )
         
-        self._sign = wx.RadioBox( self, choices = [ '<', u'\u2248', '=', '>' ] )
+        self._sign = wx.RadioBox( self, choices = [ '<', '\u2248', '=', '>' ] )
         
         self._width = wx.SpinCtrl( self, max = 200000, size = ( 60, -1 ) )
         

@@ -1,13 +1,12 @@
 import collections
-import HydrusConstants as HC
+from . import HydrusConstants as HC
 import os
 import random
-import TestConstants
 import time
 import unittest
-import HydrusData
-import HydrusGlobals as HG
-import HydrusNetworking
+from . import HydrusData
+from . import HydrusGlobals as HG
+from . import HydrusNetworking
 from mock import patch
 
 now = HydrusData.GetNow()

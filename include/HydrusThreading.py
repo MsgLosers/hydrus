@@ -1,13 +1,13 @@
 import bisect
 import collections
-import HydrusExceptions
-import Queue
+from . import HydrusExceptions
+import queue
 import random
 import threading
 import time
 import traceback
-import HydrusData
-import HydrusGlobals as HG
+from . import HydrusData
+from . import HydrusGlobals as HG
 import os
 
 NEXT_THREAD_CLEAROUT = 0
@@ -15,6 +15,13 @@ NEXT_THREAD_CLEAROUT = 0
 THREADS_TO_THREAD_INFO = {}
 THREAD_INFO_LOCK = threading.Lock()
 
+def CheckIfThreadShuttingDown():
+    
+    if IsThreadShuttingDown():
+        
+        raise HydrusExceptions.ShutdownException( 'Thread is shutting down!' )
+        
+    
 def ClearOutDeadThreads():
     
     with THREAD_INFO_LOCK:
@@ -159,9 +166,9 @@ class DAEMONWorker( DAEMON ):
         self.start()
         
     
-    def _CanStart( self, time_started_waiting ):
+    def _CanStart( self ):
         
-        return self._PreCallWaitIsDone( time_started_waiting ) and self._ControllerIsOKWithIt()
+        return self._ControllerIsOKWithIt()
         
     
     def _ControllerIsOKWithIt( self ):
@@ -169,12 +176,40 @@ class DAEMONWorker( DAEMON ):
         return True
         
     
-    def _PreCallWaitIsDone( self, time_started_waiting ):
+    def _DoAWait( self, wait_time, event_can_wake = True ):
         
-        # just shave a bit off so things that don't have any wait won't somehow have to wait a single accidentaly cycle
-        time_to_start = ( float( time_started_waiting ) - 0.1 ) + self._pre_call_wait
+        time_to_start = HydrusData.GetNow() + wait_time
         
-        return HydrusData.TimeHasPassed( time_to_start )
+        while not HydrusData.TimeHasPassed( time_to_start ):
+            
+            if event_can_wake:
+                
+                event_was_set = self._event.wait( 1.0 )
+                
+                if event_was_set:
+                    
+                    self._event.clear()
+                    
+                    return
+                    
+                
+            else:
+                
+                time.sleep( 1.0 )
+                
+            
+            CheckIfThreadShuttingDown()
+            
+        
+    
+    def _WaitUntilCanStart( self ):
+        
+        while not self._CanStart():
+            
+            time.sleep( 1.0 )
+            
+            CheckIfThreadShuttingDown()
+            
         
     
     def GetCurrentJobSummary( self ):
@@ -184,60 +219,59 @@ class DAEMONWorker( DAEMON ):
     
     def run( self ):
         
-        self._event.wait( self._init_wait )
-        
-        while True:
+        try:
             
-            if IsThreadShuttingDown():
-                
-                return
-                
+            self._DoAWait( self._init_wait )
             
-            time_started_waiting = HydrusData.GetNow()
-            
-            while not self._CanStart( time_started_waiting ):
+            while True:
                 
-                time.sleep( 1 )
+                CheckIfThreadShuttingDown()
                 
-                if IsThreadShuttingDown():
+                self._DoAWait( self._pre_call_wait, event_can_wake = False )
+                
+                CheckIfThreadShuttingDown()
+                
+                self._WaitUntilCanStart()
+                
+                CheckIfThreadShuttingDown()
+                
+                self._DoPreCall()
+                
+                try:
+                    
+                    self._callable( self._controller )
+                    
+                except HydrusExceptions.ShutdownException:
                     
                     return
                     
+                except Exception as e:
+                    
+                    HydrusData.ShowText( 'Daemon ' + self._name + ' encountered an exception:' )
+                    
+                    HydrusData.ShowException( e )
+                    
+                
+                self._DoAWait( self._period )
                 
             
-            self._DoPreCall()
+        except HydrusExceptions.ShutdownException:
             
-            try:
-                
-                self._callable( self._controller )
-                
-            except HydrusExceptions.ShutdownException:
-                
-                return
-                
-            except Exception as e:
-                
-                HydrusData.ShowText( 'Daemon ' + self._name + ' encountered an exception:' )
-                
-                HydrusData.ShowException( e )
-                
-            
-            if IsThreadShuttingDown(): return
-            
-            self._event.wait( self._period )
-            
-            self._event.clear()
+            return
             
         
     
-    def set( self, *args, **kwargs ): self._event.set()
+    def set( self, *args, **kwargs ):
+        
+        self._event.set()
+        
     
 # Big stuff like DB maintenance that we don't want to run while other important stuff is going on, like user interaction or vidya on another process
 class DAEMONBackgroundWorker( DAEMONWorker ):
     
     def _ControllerIsOKWithIt( self ):
         
-        return self._controller.GoodTimeToDoBackgroundWork()
+        return self._controller.GoodTimeToStartBackgroundWork()
         
     
 # Big stuff that we want to run when the user sees, but not at the expense of something else, like laggy session load
@@ -245,7 +279,7 @@ class DAEMONForegroundWorker( DAEMONWorker ):
     
     def _ControllerIsOKWithIt( self ):
         
-        return self._controller.GoodTimeToDoForegroundWork()
+        return self._controller.GoodTimeToStartForegroundWork()
         
     
 class THREADCallToThread( DAEMON ):
@@ -256,7 +290,7 @@ class THREADCallToThread( DAEMON ):
         
         self._callable = None
         
-        self._queue = Queue.Queue()
+        self._queue = queue.Queue()
         
         self._currently_working = True # start off true so new threads aren't used twice by two quick successive calls
         
@@ -282,50 +316,56 @@ class THREADCallToThread( DAEMON ):
     
     def run( self ):
         
-        while True:
+        try:
             
-            try:
+            while True:
                 
                 while self._queue.empty():
                     
-                    if IsThreadShuttingDown():
-                        
-                        return
-                        
+                    CheckIfThreadShuttingDown()
                     
-                    self._event.wait( 1200 )
+                    self._event.wait( 10.0 )
                     
                     self._event.clear()
                     
                 
+                CheckIfThreadShuttingDown()
+                
                 self._DoPreCall()
                 
-                ( callable, args, kwargs ) = self._queue.get()
+                try:
+                    
+                    ( callable, args, kwargs ) = self._queue.get()
+                    
+                    self._callable = ( callable, args, kwargs )
+                    
+                    callable( *args, **kwargs )
+                    
+                    self._callable = None
+                    
+                    del callable
+                    
+                except HydrusExceptions.ShutdownException:
+                    
+                    return
+                    
+                except Exception as e:
+                    
+                    HydrusData.Print( traceback.format_exc() )
+                    
+                    HydrusData.ShowException( e )
+                    
+                finally:
+                    
+                    self._currently_working = False
+                    
                 
-                self._callable = ( callable, args, kwargs )
-                
-                callable( *args, **kwargs )
-                
-                self._callable = None
-                
-                del callable
-                
-            except HydrusExceptions.ShutdownException:
-                
-                return
-                
-            except Exception as e:
-                
-                HydrusData.Print( traceback.format_exc() )
-                
-                HydrusData.ShowException( e )
-                
-            finally:
-                
-                self._currently_working = False
+                time.sleep( 0.00001 )
                 
             
-            time.sleep( 0.00001 )
+        except HydrusExceptions.ShutdownException:
+            
+            return
             
         
     
@@ -432,9 +472,23 @@ class JobScheduler( threading.Thread ):
                     
                     next_job = self._waiting.pop( 0 )
                     
-                    next_job.StartWork()
+                    if next_job.IsCancelled():
+                        
+                        continue
+                        
                     
-                    jobs_started += 1
+                    if next_job.SlotOK():
+                        
+                        next_job.StartWork()
+                        
+                        jobs_started += 1
+                        
+                    else:
+                        
+                        # delay is automatically set by SlotOK
+                        
+                        bisect.insort( self._waiting, next_job )
+                        
                     
                 else:
                     
@@ -571,7 +625,11 @@ class SchedulableJob( object ):
         self._scheduler = scheduler
         self._work_callable = work_callable
         
+        self._should_delay_on_wakeup = False
+        
         self._next_work_time = HydrusData.GetNowFloat() + initial_delay
+        
+        self._thread_slot_type = None
         
         self._work_lock = threading.Lock()
         
@@ -626,6 +684,40 @@ class SchedulableJob( object ):
         return HydrusData.TimeHasPassedFloat( self._next_work_time )
         
     
+    def PubSubWake( self, *args, **kwargs ):
+        
+        self.Wake()
+        
+    
+    def SetThreadSlotType( self, thread_type ):
+        
+        self._thread_slot_type = thread_type
+        
+    
+    def ShouldDelayOnWakeup( self, value ):
+        
+        self._should_delay_on_wakeup = value
+        
+    
+    def SlotOK( self ):
+        
+        if self._thread_slot_type is not None:
+            
+            if HG.controller.AcquireThreadSlot( self._thread_slot_type ):
+                
+                return True
+                
+            else:
+                
+                self._next_work_time = HydrusData.GetNowFloat() + 10 + random.random()
+                
+                return False
+                
+            
+        
+        return True
+        
+    
     def StartWork( self ):
         
         if self._is_cancelled.is_set():
@@ -650,9 +742,27 @@ class SchedulableJob( object ):
         self._scheduler.WorkTimesHaveChanged()
         
     
+    def WakeOnPubSub( self, topic ):
+        
+        HG.controller.sub( self, 'PubSubWake', topic )
+        
+    
     def Work( self ):
         
         try:
+            
+            if self._should_delay_on_wakeup:
+                
+                while HG.controller.JustWokeFromSleep():
+                    
+                    if IsThreadShuttingDown():
+                        
+                        return
+                        
+                    
+                    time.sleep( 1 )
+                    
+                
             
             with self._work_lock:
                 
@@ -660,6 +770,11 @@ class SchedulableJob( object ):
                 
             
         finally:
+            
+            if self._thread_slot_type is not None:
+                
+                HG.controller.ReleaseThreadSlot( self._thread_slot_type )
+                
             
             self._currently_working.clear()
             

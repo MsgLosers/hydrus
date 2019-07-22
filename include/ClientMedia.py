@@ -1,23 +1,26 @@
 import bisect
 import collections
-import ClientConstants as CC
-import ClientFiles
-import ClientRatings
-import ClientSearch
-import ClientTags
-import HydrusConstants as HC
-import HydrusTags
+from . import ClientConstants as CC
+from . import ClientFiles
+from . import ClientRatings
+from . import ClientSearch
+from . import ClientTags
+from . import HydrusConstants as HC
+from . import HydrusTags
 import os
 import random
 import time
 import traceback
 import wx
-import HydrusData
-import HydrusFileHandling
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
+from . import HydrusData
+from . import HydrusFileHandling
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusImageHandling
+from . import HydrusSerialisable
 import itertools
+
+hashes_to_jpeg_quality = {}
 
 def FlattenMedia( media_list ):
     
@@ -37,10 +40,20 @@ def FlattenMedia( media_list ):
     
     return flat_media
     
+def GetDuplicateComparisonScore( shown_media, comparison_media ):
+    
+    statements_and_scores = GetDuplicateComparisonStatements( shown_media, comparison_media )
+    
+    total_score = sum( ( score for ( statement, score ) in statements_and_scores.values() ) )
+    
+    return total_score
+    
 def GetDuplicateComparisonStatements( shown_media, comparison_media ):
     
     new_options = HG.client_controller.new_options
     
+    duplicate_comparison_score_higher_jpeg_quality = new_options.GetInteger( 'duplicate_comparison_score_higher_jpeg_quality' )
+    duplicate_comparison_score_much_higher_jpeg_quality = new_options.GetInteger( 'duplicate_comparison_score_much_higher_jpeg_quality' )
     duplicate_comparison_score_higher_filesize = new_options.GetInteger( 'duplicate_comparison_score_higher_filesize' )
     duplicate_comparison_score_much_higher_filesize = new_options.GetInteger( 'duplicate_comparison_score_much_higher_filesize' )
     duplicate_comparison_score_higher_resolution = new_options.GetInteger( 'duplicate_comparison_score_higher_resolution' )
@@ -50,39 +63,46 @@ def GetDuplicateComparisonStatements( shown_media, comparison_media ):
     
     #
     
-    statements = []
-    score = 0
+    statements_and_scores = {}
     
     # size
     
     s_size = shown_media.GetSize()
     c_size = comparison_media.GetSize()
     
-    size_ratio = float( s_size ) / float( c_size )
-    
-    if size_ratio > 2.0:
+    if s_size != c_size:
         
-        statements.append( 'This has a much larger filesize.' )
+        size_ratio = s_size / c_size
         
-        score += duplicate_comparison_score_much_higher_filesize
+        if size_ratio > 2.0:
+            
+            operator = '>>'
+            score = duplicate_comparison_score_much_higher_filesize
+            
+        elif size_ratio > 1.05:
+            
+            operator = '>'
+            score = duplicate_comparison_score_higher_filesize
+            
+        elif size_ratio < 0.5:
+            
+            operator = '<<'
+            score = -duplicate_comparison_score_much_higher_filesize
+            
+        elif size_ratio < 0.95:
+            
+            operator = '<'
+            score = -duplicate_comparison_score_higher_filesize
+            
+        else:
+            
+            operator = '\u2248'
+            score = 0
+            
         
-    elif size_ratio > 1.05:
+        statement = '{} {} {}'.format( HydrusData.ToHumanBytes( s_size ), operator, HydrusData.ToHumanBytes( c_size ) )
         
-        statements.append( 'This has a larger filesize.' )
-        
-        score += duplicate_comparison_score_higher_filesize
-        
-    elif size_ratio < 0.5:
-        
-        statements.append( 'This has a much smaller filesize.' )
-        
-        score -= duplicate_comparison_score_more_tags
-        
-    elif size_ratio < 0.95:
-        
-        statements.append( 'This has a smaller filesize.' )
-        
-        score -= duplicate_comparison_score_higher_filesize
+        statements_and_scores[ 'filesize' ]  = ( statement, score )
         
     
     # higher/same res
@@ -90,44 +110,42 @@ def GetDuplicateComparisonStatements( shown_media, comparison_media ):
     s_resolution = shown_media.GetResolution()
     c_resolution = comparison_media.GetResolution()
     
-    if s_resolution is not None and c_resolution is not None:
+    if s_resolution is not None and c_resolution is not None and s_resolution != c_resolution:
         
         ( s_w, s_h ) = shown_media.GetResolution()
         ( c_w, c_h ) = comparison_media.GetResolution()
         
-        resolution_ratio = float( s_w * s_h ) / float( c_w * c_h )
+        resolution_ratio = ( s_w * s_h ) / ( c_w * c_h )
         
         if resolution_ratio == 1.0:
             
-            if s_resolution != c_resolution:
-                
-                statements.append( 'The files have the same number of pixels but different resolution.' )
-                
+            operator = '!='
+            score = 0
             
         elif resolution_ratio > 2.0:
             
-            statements.append( 'This has much higher resolution.' )
+            operator = '>>'
+            score = duplicate_comparison_score_much_higher_resolution
             
-            score += duplicate_comparison_score_much_higher_resolution
+        elif resolution_ratio > 1.00:
             
-        elif resolution_ratio > 1.0:
-            
-            statements.append( 'This has higher resolution.' )
-            
-            score += duplicate_comparison_score_higher_resolution
+            operator = '>'
+            score = duplicate_comparison_score_higher_resolution
             
         elif resolution_ratio < 0.5:
             
-            statements.append( 'This has much lower resolution.' )
+            operator = '<<'
+            score = -duplicate_comparison_score_much_higher_resolution
             
-            score -= duplicate_comparison_score_much_higher_resolution
+        else:
             
-        elif resolution_ratio < 1.0:
+            operator = '<'
+            score = -duplicate_comparison_score_higher_resolution
             
-            statements.append( 'This has lower resolution.' )
-            
-            score -= duplicate_comparison_score_higher_resolution
-            
+        
+        statement = '{} {} {}'.format( HydrusData.ConvertResolutionToPrettyString( s_resolution ), operator, HydrusData.ConvertResolutionToPrettyString( c_resolution ) )
+        
+        statements_and_scores[ 'resolution' ] = ( statement, score )
         
     
     # same/diff mime
@@ -137,36 +155,46 @@ def GetDuplicateComparisonStatements( shown_media, comparison_media ):
     
     if s_mime != c_mime:
         
-        statements.append( 'This is ' + HC.mime_string_lookup[ s_mime ] + ', the other is ' + HC.mime_string_lookup[ c_mime ] + '.' )
+        statement = '{} vs {}'.format( HC.mime_string_lookup[ s_mime ], HC.mime_string_lookup[ c_mime ] )
+        score = 0
+        
+        statements_and_scores[ 'mime' ] = ( statement, score )
         
     
     # more tags
     
-    s_num_tags = len( shown_media.GetTagsManager().GetCurrent() )
-    c_num_tags = len( comparison_media.GetTagsManager().GetCurrent() )
+    s_num_tags = len( shown_media.GetTagsManager().GetCurrentAndPending() )
+    c_num_tags = len( comparison_media.GetTagsManager().GetCurrentAndPending() )
     
-    if s_num_tags > 0 and c_num_tags > 0:
+    if s_num_tags != c_num_tags:
         
-        if s_num_tags > c_num_tags:
+        if s_num_tags > 0 and c_num_tags > 0:
             
-            statements.append( 'This has more tags.' )
+            if s_num_tags > c_num_tags:
+                
+                operator = '>'
+                score = duplicate_comparison_score_more_tags
+                
+            else:
+                
+                operator = '<'
+                score = -duplicate_comparison_score_more_tags
+                
             
-            score += duplicate_comparison_score_more_tags
+        elif s_num_tags > 0:
             
-        elif s_num_tags < c_num_tags:
+            operator = '>>'
+            score = duplicate_comparison_score_more_tags
             
-            statements.append( 'This has fewer tags.' )
+        elif c_num_tags > 0:
             
-            score += duplicate_comparison_score_more_tags
+            operator = '<<'
+            score = -duplicate_comparison_score_more_tags
             
         
-    elif s_num_tags > 0:
+        statement = '{} tags {} {} tags'.format( HydrusData.ToHumanInt( s_num_tags ), operator, HydrusData.ToHumanInt( c_num_tags ) )
         
-        statements.append( 'This has tags, the other does not.' )
-        
-    elif c_num_tags > 0:
-        
-        statements.append( 'This has no tags, the other does.' )
+        statements_and_scores[ 'num_tags' ] = ( statement, score )
         
     
     # older
@@ -174,23 +202,91 @@ def GetDuplicateComparisonStatements( shown_media, comparison_media ):
     s_ts = shown_media.GetLocationsManager().GetTimestamp( CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
     c_ts = comparison_media.GetLocationsManager().GetTimestamp( CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
     
-    if s_ts is not None and c_ts is not None:
+    one_month = 86400 * 30
+    
+    if s_ts is not None and c_ts is not None and abs( s_ts - c_ts ) > one_month:
         
-        if s_ts < c_ts - 86400 * 30:
+        if s_ts < c_ts:
             
-            statements.append( 'This is older.' )
+            operator = 'older than'
+            score = duplicate_comparison_score_older
             
-            score += duplicate_comparison_score_older
+        else:
             
-        elif c_ts < s_ts - 86400 * 30:
+            operator = 'newer than'
+            score = -duplicate_comparison_score_older
             
-            statements.append( 'This is newer.' )
+        
+        statement = '{} {} {}'.format( HydrusData.TimestampToPrettyTimeDelta( s_ts ), operator, HydrusData.TimestampToPrettyTimeDelta( c_ts ) )
+        
+        statements_and_scores[ 'time_imported' ] = ( statement, score )
+        
+    
+    s_mime = shown_media.GetMime()
+    c_mime = comparison_media.GetMime()
+    
+    if s_mime == HC.IMAGE_JPEG and c_mime == HC.IMAGE_JPEG:
+        
+        s_hash = shown_media.GetHash()
+        c_hash = comparison_media.GetHash()
+        
+        global hashes_to_jpeg_quality
+        
+        if s_hash not in hashes_to_jpeg_quality:
             
-            score -= duplicate_comparison_score_older
+            path = HG.client_controller.client_files_manager.GetFilePath( s_hash, s_mime )
+            
+            hashes_to_jpeg_quality[ s_hash ] = HydrusImageHandling.GetJPEGQuantizationQualityEstimate( path )
+            
+        
+        if c_hash not in hashes_to_jpeg_quality:
+            
+            path = HG.client_controller.client_files_manager.GetFilePath( c_hash, c_mime )
+            
+            hashes_to_jpeg_quality[ c_hash ] = HydrusImageHandling.GetJPEGQuantizationQualityEstimate( path )
+            
+        
+        ( s_label, s_jpeg_quality ) = hashes_to_jpeg_quality[ s_hash ]
+        ( c_label, c_jpeg_quality ) = hashes_to_jpeg_quality[ c_hash ]
+        
+        score = 0
+        
+        if s_label != c_label:
+            
+            if c_jpeg_quality is None or s_jpeg_quality is None:
+                
+                score = 0
+                
+            else:
+                
+                # other way around, low score is good here
+                quality_ratio = c_jpeg_quality / s_jpeg_quality
+                
+                if quality_ratio > 2.0:
+                    
+                    score = duplicate_comparison_score_much_higher_jpeg_quality
+                    
+                elif quality_ratio > 1.0:
+                    
+                    score = duplicate_comparison_score_higher_jpeg_quality
+                    
+                elif quality_ratio < 0.5:
+                    
+                    score = -duplicate_comparison_score_much_higher_jpeg_quality
+                    
+                else:
+                    
+                    score = -duplicate_comparison_score_higher_jpeg_quality
+                    
+                
+            
+            statement = '{} vs {} jpeg quality'.format( s_label, c_label )
+            
+            statements_and_scores[ 'jpeg_quality' ] = ( statement, score )
             
         
     
-    return ( statements, score )
+    return statements_and_scores
     
 def MergeTagsManagers( tags_managers ):
     
@@ -198,14 +294,14 @@ def MergeTagsManagers( tags_managers ):
         
         for ( service_key, statuses_to_tags ) in items:
             
-            filtered = { status : tags for ( status, tags ) in statuses_to_tags.items() if status in ( HC.CONTENT_STATUS_CURRENT, HC.CONTENT_STATUS_PENDING ) }
+            filtered = { status : tags for ( status, tags ) in list(statuses_to_tags.items()) if status in ( HC.CONTENT_STATUS_CURRENT, HC.CONTENT_STATUS_PENDING ) }
             
             yield ( service_key, filtered )
             
         
     
     # [[( service_key, statuses_to_tags )]]
-    s_k_s_t_t_tupled = ( CurrentAndPendingFilter( tags_manager.GetServiceKeysToStatusesToTags().items() ) for tags_manager in tags_managers )
+    s_k_s_t_t_tupled = ( CurrentAndPendingFilter( list(tags_manager.GetServiceKeysToStatusesToTags().items()) ) for tags_manager in tags_managers )
     
     # [(service_key, statuses_to_tags)]
     flattened_s_k_s_t_t = itertools.chain.from_iterable( s_k_s_t_t_tupled )
@@ -217,10 +313,10 @@ def MergeTagsManagers( tags_managers ):
     
     merged_service_keys_to_statuses_to_tags = collections.defaultdict( HydrusData.default_dict_set )
     
-    for ( service_key, several_statuses_to_tags ) in s_k_s_t_t_dict.items():
+    for ( service_key, several_statuses_to_tags ) in list(s_k_s_t_t_dict.items()):
         
         # [[( status, tags )]]
-        s_t_t_tupled = ( s_t_t.items() for s_t_t in several_statuses_to_tags )
+        s_t_t_tupled = ( list(s_t_t.items()) for s_t_t in several_statuses_to_tags )
         
         # [( status, tags )]
         flattened_s_t_t = itertools.chain.from_iterable( s_t_t_tupled )
@@ -281,6 +377,57 @@ class FileInfoManager( object ):
     def ToTuple( self ):
         
         return ( self.hash_id, self.hash, self.size, self.mime, self.width, self.height, self.duration, self.num_frames, self.num_words )
+        
+    
+class FileViewingStatsManager( object ):
+    
+    def __init__( self, preview_views, preview_viewtime, media_views, media_viewtime ):
+        
+        self.preview_views = preview_views
+        self.preview_viewtime = preview_viewtime
+        self.media_views = media_views
+        self.media_viewtime = media_viewtime
+        
+    
+    def Duplicate( self ):
+        
+        return FileViewingStatsManager( self.preview_views, self.preview_viewtime, self.media_views, self.media_viewtime )
+        
+    
+    def GetPrettyCombinedLine( self ):
+        
+        return 'viewed ' + HydrusData.ToHumanInt( self.media_views + self.preview_views ) + ' times, totalling ' + HydrusData.TimeDeltaToPrettyTimeDelta( self.media_viewtime + self.preview_viewtime )
+        
+    
+    def GetPrettyMediaLine( self ):
+        
+        return 'viewed ' + HydrusData.ToHumanInt( self.media_views ) + ' times in media viewer, totalling ' + HydrusData.TimeDeltaToPrettyTimeDelta( self.media_viewtime )
+        
+    
+    def GetPrettyPreviewLine( self ):
+        
+        return 'viewed ' + HydrusData.ToHumanInt( self.preview_views ) + ' times in preview window, totalling ' + HydrusData.TimeDeltaToPrettyTimeDelta( self.preview_viewtime )
+        
+    
+    def ProcessContentUpdate( self, content_update ):
+        
+        ( data_type, action, row ) = content_update.ToTuple()
+        
+        if action == HC.CONTENT_UPDATE_ADD:
+            
+            ( hash, preview_views_delta, preview_viewtime_delta, media_views_delta, media_viewtime_delta ) = row
+            
+            self.preview_views += preview_views_delta
+            self.preview_viewtime += preview_viewtime_delta
+            self.media_views += media_views_delta
+            self.media_viewtime += media_viewtime_delta
+            
+        
+    
+    @staticmethod
+    def STATICGenerateEmptyManager():
+        
+        return FileViewingStatsManager( 0, 0, 0, 0 )
         
     
 class LocationsManager( object ):
@@ -505,6 +652,7 @@ class LocationsManager( object ):
                     self._inbox = False
                     
                     self._current.discard( CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
+                    self._deleted.add( CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
                     
                 
             elif action == HC.CONTENT_UPDATE_UNDELETE:
@@ -555,11 +703,6 @@ class LocationsManager( object ):
         self._pending.discard( service_key )
         self._deleted.discard( service_key )
         self._petitioned.discard( service_key )
-        
-    
-    def ShouldDefinitelyHaveThumbnail( self ): # local only
-        
-        return HC.COMBINED_LOCAL_FILE in self._current
         
     
     def ShouldIdeallyHaveThumbnail( self ): # file repo or local
@@ -619,7 +762,7 @@ class MediaList( object ):
         keys_to_medias = collections.defaultdict( list )
         
         namespaces_to_collect_by = [ data for ( collect_by_type, data ) in collect_by if collect_by_type == 'namespace' ]
-        ratings_to_collect_by = [ data for ( collect_by_type, data ) in collect_by if collect_by_type == 'rating' ]
+        ratings_to_collect_by = [ bytes.fromhex( data ) for ( collect_by_type, data ) in collect_by if collect_by_type == 'rating' ]
         
         services_manager = HG.client_controller.services_manager
         
@@ -839,7 +982,7 @@ class MediaList( object ):
                 
                 new_media = []
                 
-                for ( key, medias ) in keys_to_medias.items():
+                for ( key, medias ) in list(keys_to_medias.items()):
                     
                     if key in self._collect_map_singletons:
                         
@@ -924,8 +1067,8 @@ class MediaList( object ):
             
             keys_to_medias = self._CalculateCollectionKeysToMedias( collect_by, self._singleton_media )
             
-            self._collect_map_singletons = { key : medias[0] for ( key, medias ) in keys_to_medias.items() if len( medias ) == 1 }
-            self._collect_map_collected = { key : self._GenerateMediaCollection( [ media.GetMediaResult() for media in medias ] ) for ( key, medias ) in keys_to_medias.items() if len( medias ) > 1 }
+            self._collect_map_singletons = { key : medias[0] for ( key, medias ) in list(keys_to_medias.items()) if len( medias ) == 1 }
+            self._collect_map_collected = { key : self._GenerateMediaCollection( [ media.GetMediaResult() for media in medias ] ) for ( key, medias ) in list(keys_to_medias.items()) if len( medias ) > 1 }
             
             self._singleton_media = set( self._collect_map_singletons.values() )
             self._collected_media = set( self._collect_map_collected.values() )
@@ -938,7 +1081,10 @@ class MediaList( object ):
     
     def DeletePending( self, service_key ):
         
-        for media in self._collected_media: media.DeletePending( service_key )
+        for media in self._collected_media:
+            
+            media.DeletePending( service_key )
+            
         
     
     def GenerateMediaResults( self, has_location = None, discriminant = None, selected_media = None, unrated = None, for_media_viewer = False ):
@@ -1153,7 +1299,10 @@ class MediaList( object ):
         return False
         
     
-    def HasNoMedia( self ): return len( self._sorted_media ) == 0
+    def HasNoMedia( self ):
+        
+        return len( self._sorted_media ) == 0
+        
     
     def ProcessContentUpdates( self, service_keys_to_content_updates ):
         
@@ -1162,7 +1311,7 @@ class MediaList( object ):
             m.ProcessContentUpdates( service_keys_to_content_updates )
             
         
-        for ( service_key, content_updates ) in service_keys_to_content_updates.items():
+        for ( service_key, content_updates ) in list(service_keys_to_content_updates.items()):
             
             for content_update in content_updates:
                 
@@ -1178,15 +1327,19 @@ class MediaList( object ):
                         
                         non_trash_local_file_services = list( local_file_domains ) + [ CC.COMBINED_LOCAL_FILE_SERVICE_KEY ]
                         
-                        local_file_services = list( non_trash_local_file_services ) + [ CC.TRASH_SERVICE_KEY ]
+                        all_local_file_services = list( non_trash_local_file_services ) + [ CC.TRASH_SERVICE_KEY ]
                         
-                        deleted_from_trash_and_local_view = service_key == CC.TRASH_SERVICE_KEY and self._file_service_key in local_file_services
+                        physically_deleted = service_key in ( CC.TRASH_SERVICE_KEY, CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
+                        trashed = service_key in local_file_domains
+                        deleted_from_our_domain = service_key = self._file_service_key
                         
-                        trashed_and_non_trash_local_view = HC.options[ 'remove_trashed_files' ] and service_key in non_trash_local_file_services and self._file_service_key in non_trash_local_file_services
+                        physically_deleted_and_local_view = physically_deleted and self._file_service_key in all_local_file_services
                         
-                        deleted_from_repo_and_repo_view = service_key not in local_file_services and self._file_service_key == service_key
+                        user_says_remove_and_trashed_from_our_local_file_domain = HC.options[ 'remove_trashed_files' ] and trashed and deleted_from_our_domain
                         
-                        if deleted_from_trash_and_local_view or trashed_and_non_trash_local_view or deleted_from_repo_and_repo_view:
+                        deleted_from_repo_and_repo_view = service_key not in all_local_file_services and deleted_from_our_domain
+                        
+                        if physically_deleted_and_local_view or user_says_remove_and_trashed_from_our_local_file_domain or deleted_from_repo_and_repo_view:
                             
                             self._RemoveMediaByHashes( hashes )
                             
@@ -1198,7 +1351,7 @@ class MediaList( object ):
     
     def ProcessServiceUpdates( self, service_keys_to_service_updates ):
         
-        for ( service_key, service_updates ) in service_keys_to_service_updates.items():
+        for ( service_key, service_updates ) in list(service_keys_to_service_updates.items()):
             
             for service_update in service_updates:
                 
@@ -1261,15 +1414,11 @@ class ListeningMediaList( MediaList ):
         
         MediaList.__init__( self, file_service_key, media_results )
         
-        self._file_query_result = ClientSearch.FileQueryResult( media_results )
-        
         HG.client_controller.sub( self, 'ProcessContentUpdates', 'content_updates_gui' )
         HG.client_controller.sub( self, 'ProcessServiceUpdates', 'service_updates_gui' )
         
     
     def AddMediaResults( self, media_results, append = True ):
-        
-        self._file_query_result.AddMediaResults( media_results )
         
         new_media = []
         
@@ -1310,6 +1459,7 @@ class MediaCollection( MediaList, Media ):
         self._num_words = None
         self._tags_manager = None
         self._locations_manager = None
+        self._file_viewing_stats_manager = None
         
         self._RecalcInternals()
         
@@ -1352,6 +1502,23 @@ class MediaCollection( MediaList, Media ):
         
         self._locations_manager = LocationsManager( current, deleted, pending, petitioned )
         
+        preview_views = 0
+        preview_viewtime = 0.0
+        media_views = 0
+        media_viewtime = 0.0
+        
+        for m in self._sorted_media:
+            
+            fvsm = m.GetFileViewingStatsManager()
+            
+            preview_views += fvsm.preview_views
+            preview_viewtime += fvsm.preview_viewtime
+            media_views += fvsm.media_views
+            media_viewtime += fvsm.media_viewtime
+            
+        
+        self._file_viewing_stats_manager = FileViewingStatsManager( preview_views, preview_viewtime, media_views, media_viewtime )
+        
     
     def AddMedia( self, new_media, append = True ):
         
@@ -1371,6 +1538,11 @@ class MediaCollection( MediaList, Media ):
     
     def GetDuration( self ): return self._duration
     
+    def GetFileViewingStatsManager( self ):
+        
+        return self._file_viewing_stats_manager
+        
+    
     def GetHash( self ): return self.GetDisplayMedia().GetHash()
     
     def GetLocationsManager( self ): return self._locations_manager
@@ -1382,15 +1554,28 @@ class MediaCollection( MediaList, Media ):
         return len( self._hashes )
         
     
-    def GetNumInbox( self ): return sum( ( media.GetNumInbox() for media in self._sorted_media ) )
+    def GetNumInbox( self ):
+        
+        return sum( ( media.GetNumInbox() for media in self._sorted_media ) )
+        
     
-    def GetNumFrames( self ): return sum( ( media.GetNumFrames() for media in self._sorted_media ) )
+    def GetNumFrames( self ):
+        
+        num_frames = ( media.GetNumFrames() for media in self._sorted_media )
+        
+        return sum( ( nf for nf in num_frames if nf is not None ) )
+        
     
-    def GetNumWords( self ): return sum( ( media.GetNumWords() for media in self._sorted_media ) )
+    def GetNumWords( self ):
+        
+        num_words = ( media.GetNumWords() for media in self._sorted_media )
+        
+        return sum( ( nw for nw in num_words if nw is not None ) )
+        
     
     def GetPrettyInfoLines( self ):
         
-        size = HydrusData.ConvertIntToBytes( self._size )
+        size = HydrusData.ToHumanBytes( self._size )
         
         mime = HC.mime_string_lookup[ HC.APPLICATION_HYDRUS_CLIENT_COLLECTION ]
         
@@ -1406,7 +1591,17 @@ class MediaCollection( MediaList, Media ):
         return self._ratings_manager
         
     
-    def GetResolution( self ): return ( self._width, self._height )
+    def GetResolution( self ):
+        
+        if self._width is None:
+            
+            return ( 0, 0 )
+            
+        else:
+            
+            return ( self._width, self._height )
+            
+        
     
     def GetSingletonsTagsManagers( self ):
         
@@ -1487,6 +1682,11 @@ class MediaSingleton( Media ):
         return self._media_result.GetDuration()
         
     
+    def GetFileViewingStatsManager( self ):
+        
+        return self._media_result.GetFileViewingStatsManager()
+        
+    
     def GetHash( self ):
         
         return self._media_result.GetHash()
@@ -1548,7 +1748,7 @@ class MediaSingleton( Media ):
         
         ( hash_id, hash, size, mime, width, height, duration, num_frames, num_words ) = file_info_manager.ToTuple()
         
-        info_string = HydrusData.ConvertIntToBytes( size ) + ' ' + HC.mime_string_lookup[ mime ]
+        info_string = HydrusData.ToHumanBytes( size ) + ' ' + HC.mime_string_lookup[ mime ]
         
         if width is not None and height is not None: info_string += ' (' + HydrusData.ToHumanInt( width ) + 'x' + HydrusData.ToHumanInt( height ) + ')'
         
@@ -1563,6 +1763,7 @@ class MediaSingleton( Media ):
         locations_manager = self._media_result.GetLocationsManager()
         
         current_service_keys = locations_manager.GetCurrent()
+        deleted_service_keys = locations_manager.GetDeleted()
         
         if CC.COMBINED_LOCAL_FILE_SERVICE_KEY in current_service_keys:
             
@@ -1576,6 +1777,11 @@ class MediaSingleton( Media ):
             timestamp = locations_manager.GetTimestamp( CC.TRASH_SERVICE_KEY )
             
             lines.append( 'trashed ' + HydrusData.TimestampToPrettyTimeDelta( timestamp ) )
+            
+        
+        if CC.COMBINED_LOCAL_FILE_SERVICE_KEY in deleted_service_keys:
+            
+            lines.append( 'was once previously in this client' )
             
         
         for service_key in current_service_keys:
@@ -1612,8 +1818,14 @@ class MediaSingleton( Media ):
         
         ( width, height ) = self._media_result.GetResolution()
         
-        if width is None: return ( 0, 0 )
-        else: return ( width, height )
+        if width is None:
+            
+            return ( 0, 0 )
+            
+        else:
+            
+            return ( width, height )
+            
         
     
     def GetSize( self ):
@@ -1641,7 +1853,7 @@ class MediaSingleton( Media ):
             return ''
             
         
-        siblings_manager = HG.client_controller.GetManager( 'tag_siblings' )
+        siblings_manager = HG.client_controller.tag_siblings_manager
         
         tags = siblings_manager.CollapseTags( CC.COMBINED_TAG_SERVICE_KEY, tags )
         
@@ -1657,7 +1869,27 @@ class MediaSingleton( Media ):
     
     def HasArchive( self ): return not self._media_result.GetInbox()
     
-    def HasDuration( self ): return self._media_result.GetDuration() is not None and self._media_result.GetNumFrames() > 1
+    def HasDuration( self ):
+        
+        # some funky formats have duration but no frames
+        # some have a single 'frame' but no reported duration
+        
+        duration = self._media_result.GetDuration()
+        
+        if duration is None or duration == 0:
+            
+            return False
+            
+        
+        num_frames = self._media_result.GetNumFrames()
+        
+        if num_frames is None or num_frames == 0:
+            
+            return False
+            
+        
+        return True
+        
     
     def HasImages( self ): return self.IsImage()
     
@@ -1743,12 +1975,13 @@ class MediaSingleton( Media ):
     
 class MediaResult( object ):
     
-    def __init__( self, file_info_manager, tags_manager, locations_manager, ratings_manager ):
+    def __init__( self, file_info_manager, tags_manager, locations_manager, ratings_manager, file_viewing_stats_manager ):
         
         self._file_info_manager = file_info_manager
         self._tags_manager = tags_manager
         self._locations_manager = locations_manager
         self._ratings_manager = ratings_manager
+        self._file_viewing_stats_manager = file_viewing_stats_manager
         
     
     def DeletePending( self, service_key ):
@@ -1773,8 +2006,9 @@ class MediaResult( object ):
         tags_manager = self._tags_manager.Duplicate()
         locations_manager = self._locations_manager.Duplicate()
         ratings_manager = self._ratings_manager.Duplicate()
+        file_viewing_stats_manager = self._file_viewing_stats_manager.Duplicate()
         
-        return MediaResult( file_info_manager, tags_manager, locations_manager, ratings_manager )
+        return MediaResult( file_info_manager, tags_manager, locations_manager, ratings_manager, file_viewing_stats_manager )
         
     
     def GetDuration( self ):
@@ -1787,9 +2021,19 @@ class MediaResult( object ):
         return self._file_info_manager
         
     
+    def GetFileViewingStatsManager( self ):
+        
+        return self._file_viewing_stats_manager
+        
+    
     def GetHash( self ):
         
         return self._file_info_manager.hash
+        
+    
+    def GetHashId( self ):
+        
+        return self._file_info_manager.hash_id
         
     
     def GetInbox( self ):
@@ -1856,7 +2100,14 @@ class MediaResult( object ):
             
         elif service_type in HC.FILE_SERVICES:
             
-            self._locations_manager.ProcessContentUpdate( service_key, content_update )
+            if content_update.GetDataType() == HC.CONTENT_TYPE_FILE_VIEWING_STATS:
+                
+                self._file_viewing_stats_manager.ProcessContentUpdate( content_update )
+                
+            else:
+                
+                self._locations_manager.ProcessContentUpdate( service_key, content_update )
+                
             
         elif service_type in HC.RATINGS_SERVICES:
             
@@ -1880,6 +2131,11 @@ class MediaResult( object ):
         
         self._tags_manager.ResetService( service_key )
         self._locations_manager.ResetService( service_key )
+        
+    
+    def SetTagsManager( self, tags_manager ):
+        
+        self._tags_manager = tags_manager
         
     
     def ToTuple( self ):
@@ -1925,7 +2181,7 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
             
             service_key = sort_data
             
-            serialisable_sort_data = service_key.encode( 'hex' )
+            serialisable_sort_data = service_key.hex()
             
         
         return ( sort_metatype, serialisable_sort_data, self.sort_asc )
@@ -1945,7 +2201,7 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
             
         elif sort_metatype == 'rating':
             
-            sort_data = serialisable_sort_data.decode( 'hex' )
+            sort_data = bytes.fromhex( serialisable_sort_data )
             
         
         self.sort_type = ( sort_metatype, sort_data )
@@ -1989,6 +2245,75 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
                 def sort_key( x ):
                     
                     return random.random()
+                    
+                
+            elif sort_data == CC.SORT_FILES_BY_APPROX_BITRATE:
+                
+                def sort_key( x ):
+                    
+                    # videos > images > pdfs
+                    # heavy vids first, heavy images first
+                    
+                    duration = x.GetDuration()
+                    num_frames = x.GetNumFrames()
+                    size = x.GetSize()
+                    resolution = x.GetResolution()
+                    
+                    if duration is None or duration == 0:
+                        
+                        if size is None or size == 0:
+                            
+                            duration_bitrate = -1
+                            frame_bitrate = -1
+                            
+                        else:
+                            
+                            duration_bitrate = 0
+                            
+                            if resolution is None:
+                                
+                                frame_bitrate = 0
+                                
+                            else:
+                                
+                                ( width, height ) = x.GetResolution()
+                                
+                                num_pixels = width * height
+                                
+                                if size is None or size == 0 or num_pixels == 0:
+                                    
+                                    frame_bitrate = -1
+                                    
+                                else:
+                                    
+                                    frame_bitrate = size / num_pixels
+                                    
+                                
+                            
+                        
+                    else:
+                        
+                        if size is None or size == 0:
+                            
+                            duration_bitrate = -1
+                            frame_bitrate = -1
+                            
+                        else:
+                            
+                            duration_bitrate = size / duration
+                            
+                            if num_frames is None or num_frames == 0:
+                                
+                                frame_bitrate = 0
+                                
+                            else:
+                                
+                                frame_bitrate = duration_bitrate / num_frames
+                                
+                            
+                        
+                    
+                    return ( duration_bitrate, frame_bitrate )
                     
                 
             elif sort_data == CC.SORT_FILES_BY_FILESIZE:
@@ -2047,7 +2372,7 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
                         
                     else:
                         
-                        return float( width ) / float( height )
+                        return width / height
                         
                     
                 
@@ -2081,6 +2406,24 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
                 def sort_key( x ):
                     
                     return x.GetMime()
+                    
+                
+            elif sort_data == CC.SORT_FILES_BY_MEDIA_VIEWS:
+                
+                def sort_key( x ):
+                    
+                    fvsm = x.GetFileViewingStatsManager()
+                    
+                    return ( fvsm.media_views, fvsm.media_viewtime )
+                    
+                
+            elif sort_data == CC.SORT_FILES_BY_MEDIA_VIEWTIME:
+                
+                def sort_key( x ):
+                    
+                    fvsm = x.GetFileViewingStatsManager()
+                    
+                    return ( fvsm.media_viewtime, fvsm.media_views )
                     
                 
             
@@ -2122,16 +2465,19 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
             
             sort_string_lookup = {}
             
-            sort_string_lookup[ CC.SORT_FILES_BY_FILESIZE ] = 'filesize'
-            sort_string_lookup[ CC.SORT_FILES_BY_DURATION ] = 'duration'
-            sort_string_lookup[ CC.SORT_FILES_BY_IMPORT_TIME ] = 'time imported'
-            sort_string_lookup[ CC.SORT_FILES_BY_MIME ] = 'mime'
+            sort_string_lookup[ CC.SORT_FILES_BY_DURATION ] = 'dimensions: duration'
+            sort_string_lookup[ CC.SORT_FILES_BY_HEIGHT ] = 'dimensions: height'
+            sort_string_lookup[ CC.SORT_FILES_BY_NUM_PIXELS ] = 'dimensions: number of pixels'
+            sort_string_lookup[ CC.SORT_FILES_BY_RATIO ] = 'dimensions: resolution ratio'
+            sort_string_lookup[ CC.SORT_FILES_BY_WIDTH ] = 'dimensions: width'
+            sort_string_lookup[ CC.SORT_FILES_BY_APPROX_BITRATE ] = 'file: approximate bitrate'
+            sort_string_lookup[ CC.SORT_FILES_BY_FILESIZE ] = 'file: filesize'
+            sort_string_lookup[ CC.SORT_FILES_BY_MIME ] = 'file: filetype'
+            sort_string_lookup[ CC.SORT_FILES_BY_IMPORT_TIME ] = 'file: time imported'
             sort_string_lookup[ CC.SORT_FILES_BY_RANDOM ] = 'random'
-            sort_string_lookup[ CC.SORT_FILES_BY_WIDTH ] = 'width'
-            sort_string_lookup[ CC.SORT_FILES_BY_HEIGHT ] = 'height'
-            sort_string_lookup[ CC.SORT_FILES_BY_RATIO ] = 'resolution ratio'
-            sort_string_lookup[ CC.SORT_FILES_BY_NUM_PIXELS ] = 'number of pixels'
-            sort_string_lookup[ CC.SORT_FILES_BY_NUM_TAGS ] = 'number of tags'
+            sort_string_lookup[ CC.SORT_FILES_BY_NUM_TAGS ] = 'tags: number of tags'
+            sort_string_lookup[ CC.SORT_FILES_BY_MEDIA_VIEWS ] = 'views: media views'
+            sort_string_lookup[ CC.SORT_FILES_BY_MEDIA_VIEWTIME ] = 'views: media viewtime'
             
             sort_string += sort_string_lookup[ sort_data ]
             
@@ -2139,7 +2485,7 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
             
             namespaces = sort_data
             
-            sort_string += '-'.join( namespaces )
+            sort_string += 'tags: ' + '-'.join( namespaces )
             
         elif sort_metatype == 'rating':
             
@@ -2147,7 +2493,7 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
             
             service = HG.client_controller.services_manager.GetService( service_key )
             
-            sort_string += service.GetName()
+            sort_string += 'rating: ' + service.GetName()
             
         
         return sort_string
@@ -2161,22 +2507,25 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
             
             sort_string_lookup = {}
             
-            sort_string_lookup[ CC.SORT_FILES_BY_FILESIZE ] = ( 'smallest first', 'largest first' )
-            sort_string_lookup[ CC.SORT_FILES_BY_DURATION ] = ( 'shortest first', 'longest first' )
-            sort_string_lookup[ CC.SORT_FILES_BY_IMPORT_TIME ] = ( 'oldest first', 'newest first' )
-            sort_string_lookup[ CC.SORT_FILES_BY_MIME ] = ( 'mime', 'mime' )
-            sort_string_lookup[ CC.SORT_FILES_BY_RANDOM ] = ( 'random', 'random' )
-            sort_string_lookup[ CC.SORT_FILES_BY_WIDTH ] = ( 'slimmest first', 'widest first' )
-            sort_string_lookup[ CC.SORT_FILES_BY_HEIGHT ] = ( 'shortest first', 'tallest first' )
-            sort_string_lookup[ CC.SORT_FILES_BY_RATIO ] = ( 'tallest first', 'widest first' )
-            sort_string_lookup[ CC.SORT_FILES_BY_NUM_PIXELS ] = ( 'ascending', 'descending' )
-            sort_string_lookup[ CC.SORT_FILES_BY_NUM_TAGS ] = ( 'ascending', 'descending' )
+            sort_string_lookup[ CC.SORT_FILES_BY_APPROX_BITRATE ] = ( 'smallest first', 'largest first', CC.SORT_DESC )
+            sort_string_lookup[ CC.SORT_FILES_BY_FILESIZE ] = ( 'smallest first', 'largest first', CC.SORT_DESC )
+            sort_string_lookup[ CC.SORT_FILES_BY_DURATION ] = ( 'shortest first', 'longest first', CC.SORT_DESC )
+            sort_string_lookup[ CC.SORT_FILES_BY_IMPORT_TIME ] = ( 'oldest first', 'newest first', CC.SORT_DESC )
+            sort_string_lookup[ CC.SORT_FILES_BY_MIME ] = ( 'mime', 'mime', CC.SORT_ASC )
+            sort_string_lookup[ CC.SORT_FILES_BY_RANDOM ] = ( 'random', 'random', CC.SORT_ASC )
+            sort_string_lookup[ CC.SORT_FILES_BY_WIDTH ] = ( 'slimmest first', 'widest first', CC.SORT_ASC )
+            sort_string_lookup[ CC.SORT_FILES_BY_HEIGHT ] = ( 'shortest first', 'tallest first', CC.SORT_ASC )
+            sort_string_lookup[ CC.SORT_FILES_BY_RATIO ] = ( 'tallest first', 'widest first', CC.SORT_ASC )
+            sort_string_lookup[ CC.SORT_FILES_BY_NUM_PIXELS ] = ( 'ascending', 'descending', CC.SORT_DESC )
+            sort_string_lookup[ CC.SORT_FILES_BY_NUM_TAGS ] = ( 'ascending', 'descending', CC.SORT_ASC )
+            sort_string_lookup[ CC.SORT_FILES_BY_MEDIA_VIEWS ] = ( 'ascending', 'descending', CC.SORT_DESC )
+            sort_string_lookup[ CC.SORT_FILES_BY_MEDIA_VIEWTIME ] = ( 'ascending', 'descending', CC.SORT_DESC )
             
             return sort_string_lookup[ sort_data ]
             
         else:
             
-            return ( 'ascending', 'descending' )
+            return ( 'ascending', 'descending', CC.SORT_BY_INCIDENCE_DESC )
             
         
     
@@ -2328,11 +2677,11 @@ class TagsManagerSimple( object ):
         
         dupe_service_keys_to_statuses_to_tags = collections.defaultdict( HydrusData.default_dict_set )
         
-        for ( service_key, statuses_to_tags ) in self._service_keys_to_statuses_to_tags.items():
+        for ( service_key, statuses_to_tags ) in list(self._service_keys_to_statuses_to_tags.items()):
             
             dupe_statuses_to_tags = HydrusData.default_dict_set()
             
-            for ( status, tags ) in statuses_to_tags.items():
+            for ( status, tags ) in list(statuses_to_tags.items()):
                 
                 dupe_statuses_to_tags[ status ] = set( tags )
                 
@@ -2403,6 +2752,11 @@ class TagsManagerSimple( object ):
         return statuses_to_tags[ HC.CONTENT_STATUS_CURRENT ]
         
     
+    def GetCurrentAndPending( self, service_key = CC.COMBINED_TAG_SERVICE_KEY ):
+        
+        return self.GetCurrent( service_key = service_key ).union( self.GetPending( service_key = service_key ) )
+        
+    
     def GetDeleted( self, service_key = CC.COMBINED_TAG_SERVICE_KEY ):
         
         if service_key == CC.COMBINED_TAG_SERVICE_KEY:
@@ -2465,8 +2819,6 @@ class TagsManager( TagsManagerSimple ):
         
         self._combined_is_calculated = False
         
-        HG.client_controller.sub( self, 'NewSiblings', 'notify_new_siblings_data' )
-        
     
     def _RecalcCombinedIfNeeded( self ):
         
@@ -2474,11 +2826,11 @@ class TagsManager( TagsManagerSimple ):
             
             # Combined tags are pre-collapsed by siblings
             
-            siblings_manager = HG.client_controller.GetManager( 'tag_siblings' )
+            siblings_manager = HG.client_controller.tag_siblings_manager
             
             combined_statuses_to_tags = collections.defaultdict( set )
             
-            for ( service_key, statuses_to_tags ) in self._service_keys_to_statuses_to_tags.items():
+            for ( service_key, statuses_to_tags ) in list(self._service_keys_to_statuses_to_tags.items()):
                 
                 if service_key == CC.COMBINED_TAG_SERVICE_KEY:
                     
@@ -2518,11 +2870,11 @@ class TagsManager( TagsManagerSimple ):
         
         dupe_service_keys_to_statuses_to_tags = collections.defaultdict( HydrusData.default_dict_set )
         
-        for ( service_key, statuses_to_tags ) in self._service_keys_to_statuses_to_tags.items():
+        for ( service_key, statuses_to_tags ) in list(self._service_keys_to_statuses_to_tags.items()):
             
             dupe_statuses_to_tags = HydrusData.default_dict_set()
             
-            for ( status, tags ) in statuses_to_tags.items():
+            for ( status, tags ) in list(statuses_to_tags.items()):
                 
                 dupe_statuses_to_tags[ status ] = set( tags )
                 
@@ -2587,14 +2939,7 @@ class TagsManager( TagsManagerSimple ):
         
         ( data_type, action, row ) = content_update.ToTuple()
         
-        if action == HC.CONTENT_UPDATE_PETITION:
-            
-            ( tag, hashes, reason ) = row
-            
-        else:
-            
-            ( tag, hashes ) = row
-            
+        ( tag, hashes ) = row
         
         if action == HC.CONTENT_UPDATE_ADD:
             
@@ -2628,7 +2973,10 @@ class TagsManager( TagsManagerSimple ):
                 statuses_to_tags[ HC.CONTENT_STATUS_PETITIONED ].add( tag )
                 
             
-        elif action == HC.CONTENT_UPDATE_RESCIND_PETITION: statuses_to_tags[ HC.CONTENT_STATUS_PETITIONED ].discard( tag )
+        elif action == HC.CONTENT_UPDATE_RESCIND_PETITION:
+            
+            statuses_to_tags[ HC.CONTENT_STATUS_PETITIONED ].discard( tag )
+            
         
         self._combined_is_calculated = False
         

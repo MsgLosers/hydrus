@@ -1,81 +1,68 @@
 import gc
 import hashlib
-import HydrusAudioHandling
-import HydrusConstants as HC
-import HydrusData
-import HydrusDocumentHandling
-import HydrusExceptions
-import HydrusFlashHandling
-import HydrusImageHandling
-import HydrusPaths
-import HydrusText
-import HydrusVideoHandling
+from . import HydrusAudioHandling
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusDocumentHandling
+from . import HydrusExceptions
+from . import HydrusFlashHandling
+from . import HydrusImageHandling
+from . import HydrusNetwork
+from . import HydrusPaths
+from . import HydrusSerialisable
+from . import HydrusText
+from . import HydrusVideoHandling
 import os
 import threading
 import traceback
-import cStringIO
 
 # Mime
 
 header_and_mime = [
-    ( 0, '\xff\xd8', HC.IMAGE_JPEG ),
-    ( 0, 'GIF87a', HC.IMAGE_GIF ),
-    ( 0, 'GIF89a', HC.IMAGE_GIF ),
-    ( 0, '\x89PNG', HC.UNDETERMINED_PNG ),
-    ( 0, 'BM', HC.IMAGE_BMP ),
-    ( 0, 'CWS', HC.APPLICATION_FLASH ),
-    ( 0, 'FWS', HC.APPLICATION_FLASH ),
-    ( 0, 'ZWS', HC.APPLICATION_FLASH ),
-    ( 0, 'FLV', HC.VIDEO_FLV ),
-    ( 0, '%PDF', HC.APPLICATION_PDF ),
-    ( 0, 'PK\x03\x04', HC.APPLICATION_ZIP ),
-    ( 0, 'PK\x05\x06', HC.APPLICATION_ZIP ),
-    ( 0, 'PK\x07\x08', HC.APPLICATION_ZIP ),
-    ( 0, '7z\xBC\xAF\x27\x1C', HC.APPLICATION_7Z ),
-    ( 0, '\x52\x61\x72\x21\x1A\x07\x00', HC.APPLICATION_RAR ),
-    ( 0, '\x52\x61\x72\x21\x1A\x07\x01\x00', HC.APPLICATION_RAR ),
-    ( 0, 'hydrus encrypted zip', HC.APPLICATION_HYDRUS_ENCRYPTED_ZIP ),
-    ( 4, 'ftypmp4', HC.VIDEO_MP4 ),
-    ( 4, 'ftypisom', HC.VIDEO_MP4 ),
-    ( 4, 'ftypM4V', HC.VIDEO_MP4 ),
-    ( 4, 'ftypMSNV', HC.VIDEO_MP4 ),
-    ( 4, 'ftypavc1', HC.VIDEO_MP4 ),
-    ( 4, 'ftypFACE', HC.VIDEO_MP4 ),
-    ( 4, 'ftypdash', HC.VIDEO_MP4 ),
-    ( 4, 'ftypqt', HC.VIDEO_MOV ),
-    ( 0, 'fLaC', HC.AUDIO_FLAC ),
-    ( 8, 'AVI ', HC.VIDEO_AVI ),
-    ( 0, '\x30\x26\xB2\x75\x8E\x66\xCF\x11\xA6\xD9\x00\xAA\x00\x62\xCE\x6C', HC.UNDETERMINED_WM )
+    ( 0, b'\xff\xd8', HC.IMAGE_JPEG ),
+    ( 0, b'GIF87a', HC.IMAGE_GIF ),
+    ( 0, b'GIF89a', HC.IMAGE_GIF ),
+    ( 0, b'\x89PNG', HC.UNDETERMINED_PNG ),
+    ( 8, b'WEBP', HC.IMAGE_WEBP ),
+    ( 0, b'II*\x00', HC.IMAGE_TIFF ),
+    ( 0, b'MM\x00*', HC.IMAGE_TIFF ),
+    ( 0, b'BM', HC.IMAGE_BMP ),
+    ( 0, b'\x00\x00\x01\x00', HC.IMAGE_ICON ),
+    ( 0, b'\x00\x00\x02\x00', HC.IMAGE_ICON ),
+    ( 0, b'CWS', HC.APPLICATION_FLASH ),
+    ( 0, b'FWS', HC.APPLICATION_FLASH ),
+    ( 0, b'ZWS', HC.APPLICATION_FLASH ),
+    ( 0, b'FLV', HC.VIDEO_FLV ),
+    ( 0, b'%PDF', HC.APPLICATION_PDF ),
+    ( 0, b'8BPS\x00\x01', HC.APPLICATION_PSD ),
+    ( 0, b'8BPS\x00\x02', HC.APPLICATION_PSD ), # PSB, which is basically PSD v2 and does giganto resolution
+    ( 0, b'PK\x03\x04', HC.APPLICATION_ZIP ),
+    ( 0, b'PK\x05\x06', HC.APPLICATION_ZIP ),
+    ( 0, b'PK\x07\x08', HC.APPLICATION_ZIP ),
+    ( 0, b'7z\xBC\xAF\x27\x1C', HC.APPLICATION_7Z ),
+    ( 0, b'\x52\x61\x72\x21\x1A\x07\x00', HC.APPLICATION_RAR ),
+    ( 0, b'\x52\x61\x72\x21\x1A\x07\x01\x00', HC.APPLICATION_RAR ),
+    ( 0, b'hydrus encrypted zip', HC.APPLICATION_HYDRUS_ENCRYPTED_ZIP ),
+    ( 4, b'ftypmp4', HC.VIDEO_MP4 ),
+    ( 4, b'ftypisom', HC.VIDEO_MP4 ),
+    ( 4, b'ftypM4V', HC.VIDEO_MP4 ),
+    ( 4, b'ftypMSNV', HC.VIDEO_MP4 ),
+    ( 4, b'ftypavc1', HC.VIDEO_MP4 ),
+    ( 4, b'ftypFACE', HC.VIDEO_MP4 ),
+    ( 4, b'ftypdash', HC.VIDEO_MP4 ),
+    ( 4, b'ftypqt', HC.VIDEO_MOV ),
+    ( 0, b'fLaC', HC.AUDIO_FLAC ),
+    ( 8, b'AVI ', HC.VIDEO_AVI ),
+    ( 0, b'\x30\x26\xB2\x75\x8E\x66\xCF\x11\xA6\xD9\x00\xAA\x00\x62\xCE\x6C', HC.UNDETERMINED_WM )
     ]
 
-def SaveThumbnailToStreamPIL( pil_image, dimensions, f ):
+def GenerateThumbnailBytes( path, target_resolution, mime, duration, num_frames, percentage_in = 35 ):
     
-    # when the palette is limited, the thumbnail antialias won't add new colours, so you get nearest-neighbour-like behaviour
-    
-    original_file_was_png = pil_image.format == 'PNG'
-    
-    pil_image = HydrusImageHandling.Dequantize( pil_image )
-    
-    HydrusImageHandling.EfficientlyThumbnailPILImage( pil_image, dimensions )
-    
-    if original_file_was_png or pil_image.mode == 'RGBA':
+    if mime in ( HC.IMAGE_JPEG, HC.IMAGE_PNG, HC.IMAGE_GIF, HC.IMAGE_WEBP, HC.IMAGE_TIFF, HC.IMAGE_ICON ): # not apng atm
         
-        pil_image.save( f, 'PNG' )
+        thumbnail_bytes = HydrusImageHandling.GenerateThumbnailBytesFromStaticImagePath( path, target_resolution, mime )
         
     else:
-        
-        pil_image.save( f, 'JPEG', quality = 92 )
-        
-    
-def GenerateThumbnail( path, mime, dimensions = HC.UNSCALED_THUMBNAIL_DIMENSIONS, percentage_in = 35 ):
-    
-    if mime in ( HC.IMAGE_JPEG, HC.IMAGE_PNG, HC.IMAGE_GIF ):
-        
-        thumbnail = GenerateThumbnailFromStaticImage( path, dimensions, mime )
-        
-    else:
-        
-        f = cStringIO.StringIO()
         
         if mime == HC.APPLICATION_FLASH:
             
@@ -85,32 +72,22 @@ def GenerateThumbnail( path, mime, dimensions = HC.UNSCALED_THUMBNAIL_DIMENSIONS
                 
                 HydrusFlashHandling.RenderPageToFile( path, temp_path, 1 )
                 
-                pil_image = HydrusImageHandling.GeneratePILImage( temp_path )
-                
-                SaveThumbnailToStreamPIL( pil_image, dimensions, f )
+                thumbnail_bytes = HydrusImageHandling.GenerateThumbnailBytesFromStaticImagePath( temp_path, target_resolution, mime )
                 
             except:
                 
-                flash_default_path = os.path.join( HC.STATIC_DIR, 'flash.png' )
+                thumb_path = os.path.join( HC.STATIC_DIR, 'flash.png' )
                 
-                pil_image = HydrusImageHandling.GeneratePILImage( flash_default_path )
-                
-                SaveThumbnailToStreamPIL( pil_image, dimensions, f )
+                thumbnail_bytes = HydrusImageHandling.GenerateThumbnailBytesFromStaticImagePath( thumb_path, target_resolution, mime )
                 
             finally:
-                
-                del pil_image
                 
                 HydrusPaths.CleanUpTempPath( os_file_handle, temp_path )
                 
             
         else:
             
-            ( size, mime, width, height, duration, num_frames, num_words ) = GetFileInfo( path )
-            
-            cropped_dimensions = HydrusImageHandling.GetThumbnailResolution( ( width, height ), dimensions )
-            
-            renderer = HydrusVideoHandling.VideoRendererFFMPEG( path, mime, duration, num_frames, cropped_dimensions )
+            renderer = HydrusVideoHandling.VideoRendererFFMPEG( path, mime, duration, num_frames, target_resolution )
             
             renderer.read_frame() # this initialises the renderer and loads the first frame as a fallback
             
@@ -125,38 +102,18 @@ def GenerateThumbnail( path, mime, dimensions = HC.UNSCALED_THUMBNAIL_DIMENSIONS
                 raise Exception( 'Could not create a thumbnail from that video!' )
                 
             
-            pil_image = HydrusImageHandling.GeneratePILImageFromNumpyImage( numpy_image )
+            numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, target_resolution ) # just in case ffmpeg doesn't deliver right
             
-            SaveThumbnailToStreamPIL( pil_image, dimensions, f )
+            thumbnail_bytes = HydrusImageHandling.GenerateThumbnailBytesNumPy( numpy_image, mime )
+            
+            renderer.Stop()
+            
+            del renderer
             
         
-        f.seek( 0 )
-        
-        thumbnail = f.read()
-        
-        f.close()
-        
     
-    return thumbnail
+    return thumbnail_bytes
     
-def GenerateThumbnailFromStaticImagePIL( path, dimensions = HC.UNSCALED_THUMBNAIL_DIMENSIONS, mime = None ):
-    
-    f = cStringIO.StringIO()
-    
-    pil_image = HydrusImageHandling.GeneratePILImage( path )
-    
-    SaveThumbnailToStreamPIL( pil_image, dimensions, f )
-    
-    f.seek( 0 )
-    
-    thumbnail = f.read()
-    
-    f.close()
-    
-    return thumbnail
-    
-GenerateThumbnailFromStaticImage = GenerateThumbnailFromStaticImagePIL
-
 def GetExtraHashesFromPath( path ):
     
     h_md5 = hashlib.md5()
@@ -179,7 +136,7 @@ def GetExtraHashesFromPath( path ):
     
     return ( md5, sha1, sha512 )
     
-def GetFileInfo( path, mime = None ):
+def GetFileInfo( path, mime = None, ok_to_look_for_hydrus_updates = False ):
     
     size = os.path.getsize( path )
     
@@ -190,7 +147,7 @@ def GetFileInfo( path, mime = None ):
     
     if mime is None:
         
-        mime = GetMime( path )
+        mime = GetMime( path, ok_to_look_for_hydrus_updates = ok_to_look_for_hydrus_updates )
         
     
     if mime not in HC.ALLOWED_MIMES:
@@ -215,7 +172,7 @@ def GetFileInfo( path, mime = None ):
     num_frames = None
     num_words = None
     
-    if mime in ( HC.IMAGE_JPEG, HC.IMAGE_PNG, HC.IMAGE_GIF ):
+    if mime in ( HC.IMAGE_JPEG, HC.IMAGE_PNG, HC.IMAGE_GIF, HC.IMAGE_WEBP, HC.IMAGE_TIFF, HC.IMAGE_ICON ):
         
         ( ( width, height ), duration, num_frames ) = HydrusImageHandling.GetImageProperties( path, mime )
         
@@ -231,13 +188,17 @@ def GetFileInfo( path, mime = None ):
         
         num_words = HydrusDocumentHandling.GetPDFNumWords( path ) # this now give None until a better solution can be found
         
+    elif mime == HC.APPLICATION_PSD:
+        
+        ( width, height ) = HydrusImageHandling.GetPSDResolution( path )
+        
     elif mime in HC.AUDIO:
         
         ffmpeg_lines = HydrusVideoHandling.GetFFMPEGInfoLines( path )
         
-        duration_in_s = HydrusVideoHandling.ParseFFMPEGDuration( ffmpeg_lines )
+        ( file_duration_in_s, stream_duration_in_s ) = HydrusVideoHandling.ParseFFMPEGDuration( ffmpeg_lines )
         
-        duration = int( duration_in_s * 1000 )
+        duration = int( file_duration_in_s * 1000 )
         
     
     if width is not None and width < 0:
@@ -281,7 +242,7 @@ def GetHashFromPath( path ):
     
     return h.digest()
     
-def GetMime( path ):
+def GetMime( path, ok_to_look_for_hydrus_updates = False ):
     
     size = os.path.getsize( path )
     
@@ -339,17 +300,43 @@ def GetMime( path ):
         
     except HydrusExceptions.MimeException:
         
-        HydrusData.Print( 'FFMPEG couldn\'t figure out the mime for: ' + path )
+        pass
         
     except Exception as e:
         
-        HydrusData.Print( 'FFMPEG couldn\'t figure out the mime for: ' + path )
+        HydrusData.Print( 'FFMPEG had trouble with: ' + path )
         HydrusData.PrintException( e, do_wait = False )
         
     
     if HydrusText.LooksLikeHTML( bit_to_check ):
         
         return HC.TEXT_HTML
+        
+    
+    if ok_to_look_for_hydrus_updates:
+        
+        with open( path, 'rb' ) as f:
+            
+            update_network_bytes = f.read()
+            
+        
+        try:
+            
+            update = HydrusSerialisable.CreateFromNetworkBytes( update_network_bytes )
+            
+            if isinstance( update, HydrusNetwork.ContentUpdate ):
+                
+                return HC.APPLICATION_HYDRUS_UPDATE_CONTENT
+                
+            elif isinstance( update, HydrusNetwork.DefinitionsUpdate ):
+                
+                return HC.APPLICATION_HYDRUS_UPDATE_DEFINITIONS
+                
+            
+        except:
+            
+            pass
+            
         
     
     return HC.APPLICATION_UNKNOWN

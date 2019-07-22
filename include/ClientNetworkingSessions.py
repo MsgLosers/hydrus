@@ -1,11 +1,24 @@
-import cPickle
-import ClientConstants as CC
-import ClientNetworkingContexts
-import ClientNetworkingDomain
-import HydrusData
-import HydrusSerialisable
+import pickle
+from . import ClientConstants as CC
+from . import ClientNetworkingContexts
+from . import ClientNetworkingDomain
+from . import HydrusData
+from . import HydrusSerialisable
+from . import HydrusGlobals as HG
 import requests
 import threading
+
+try:
+    
+    import socket
+    import socks
+    
+    SOCKS_PROXY_OK = True
+    
+except:
+    
+    SOCKS_PROXY_OK = False
+    
 
 class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
     
@@ -28,6 +41,12 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
         self._network_contexts_to_sessions = {}
         
         self._network_contexts_to_session_timeouts = {}
+        
+        self._proxies_dict = {}
+        
+        self._Reinitialise()
+        
+        HG.client_controller.sub( self, 'Reinitialise', 'notify_new_options' )
         
     
     def _CleanSessionCookies( self, network_context, session ):
@@ -61,7 +80,7 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
     
     def _GetSerialisableInfo( self ):
         
-        serialisable_network_contexts_to_sessions = [ ( network_context.GetSerialisableTuple(), cPickle.dumps( session ) ) for ( network_context, session ) in self._network_contexts_to_sessions.items() ]
+        serialisable_network_contexts_to_sessions = [ ( network_context.GetSerialisableTuple(), pickle.dumps( session ).hex() ) for ( network_context, session ) in list(self._network_contexts_to_sessions.items()) ]
         
         return serialisable_network_contexts_to_sessions
         
@@ -83,13 +102,13 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
         
         serialisable_network_contexts_to_sessions = serialisable_info
         
-        for ( serialisable_network_context, pickled_session ) in serialisable_network_contexts_to_sessions:
+        for ( serialisable_network_context, pickled_session_hex ) in serialisable_network_contexts_to_sessions:
             
             network_context = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_network_context )
             
             try:
                 
-                session = cPickle.loads( str( pickled_session ) )
+                session = pickle.loads( bytes.fromhex( pickled_session_hex ) )
                 
             except:
                 
@@ -101,6 +120,24 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
             session.cookies.clear_session_cookies()
             
             self._network_contexts_to_sessions[ network_context ] = session
+            
+        
+    
+    def _Reinitialise( self ):
+        
+        self._proxies_dict = {}
+        
+        http_proxy = HG.client_controller.new_options.GetNoneableString( 'http_proxy' )
+        https_proxy = HG.client_controller.new_options.GetNoneableString( 'https_proxy' )
+        
+        if http_proxy is not None:
+            
+            self._proxies_dict[ 'http' ] = http_proxy
+            
+        
+        if https_proxy is not None:
+            
+            self._proxies_dict[ 'https' ] = https_proxy
             
         
     
@@ -128,7 +165,7 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            return self._network_contexts_to_sessions.keys()
+            return list(self._network_contexts_to_sessions.keys())
             
         
     
@@ -144,6 +181,11 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
                 
             
             session = self._network_contexts_to_sessions[ network_context ]
+            
+            if session.proxies != self._proxies_dict:
+                
+                session.proxies = dict( self._proxies_dict )
+                
             
             #
             
@@ -179,6 +221,14 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
         with self._lock:
             
             return self._dirty
+            
+        
+    
+    def Reinitialise( self ):
+        
+        with self._lock:
+            
+            self._Reinitialise()
             
         
     

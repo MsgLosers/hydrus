@@ -1,18 +1,18 @@
-import ClientConstants as CC
+from . import ClientConstants as CC
 import collections
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
 
 class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_DUPLICATE_ACTION_OPTIONS
     SERIALISABLE_NAME = 'Duplicate Action Options'
-    SERIALISABLE_VERSION = 3
+    SERIALISABLE_VERSION = 4
     
-    def __init__( self, tag_service_actions = None, rating_service_actions = None, delete_second_file = False, sync_archive = False, delete_both_files = False, sync_urls_action = None ):
+    def __init__( self, tag_service_actions = None, rating_service_actions = None, sync_archive = False, sync_urls_action = None ):
         
         if tag_service_actions is None:
             
@@ -28,9 +28,7 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
         
         self._tag_service_actions = tag_service_actions
         self._rating_service_actions = rating_service_actions
-        self._delete_second_file = delete_second_file
         self._sync_archive = sync_archive
-        self._delete_both_files = delete_both_files
         self._sync_urls_action = sync_urls_action
         
     
@@ -44,18 +42,18 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
             self._rating_service_actions = [ ( service_key, action ) for ( service_key, action ) in self._rating_service_actions if services_manager.ServiceExists( service_key ) and services_manager.GetServiceType( service_key ) in ( HC.LOCAL_RATING_LIKE, HC.LOCAL_RATING_NUMERICAL ) ]
             
         
-        serialisable_tag_service_actions = [ ( service_key.encode( 'hex' ), action, tag_filter.GetSerialisableTuple() ) for ( service_key, action, tag_filter ) in self._tag_service_actions ]
-        serialisable_rating_service_actions = [ ( service_key.encode( 'hex' ), action ) for ( service_key, action ) in self._rating_service_actions ]
+        serialisable_tag_service_actions = [ ( service_key.hex(), action, tag_filter.GetSerialisableTuple() ) for ( service_key, action, tag_filter ) in self._tag_service_actions ]
+        serialisable_rating_service_actions = [ ( service_key.hex(), action ) for ( service_key, action ) in self._rating_service_actions ]
         
-        return ( serialisable_tag_service_actions, serialisable_rating_service_actions, self._delete_second_file, self._sync_archive, self._delete_both_files, self._sync_urls_action )
+        return ( serialisable_tag_service_actions, serialisable_rating_service_actions, self._sync_archive, self._sync_urls_action )
         
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
-        ( serialisable_tag_service_actions, serialisable_rating_service_actions, self._delete_second_file, self._sync_archive, self._delete_both_files, self._sync_urls_action ) = serialisable_info
+        ( serialisable_tag_service_actions, serialisable_rating_service_actions, self._sync_archive, self._sync_urls_action ) = serialisable_info
         
-        self._tag_service_actions = [ ( serialisable_service_key.decode( 'hex' ), action, HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_filter ) ) for ( serialisable_service_key, action, serialisable_tag_filter ) in serialisable_tag_service_actions ]
-        self._rating_service_actions = [ ( serialisable_service_key.decode( 'hex' ), action ) for ( serialisable_service_key, action ) in serialisable_rating_service_actions ]
+        self._tag_service_actions = [ ( bytes.fromhex( serialisable_service_key ), action, HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_filter ) ) for ( serialisable_service_key, action, serialisable_tag_filter ) in serialisable_tag_service_actions ]
+        self._rating_service_actions = [ ( bytes.fromhex( serialisable_service_key ), action ) for ( serialisable_service_key, action ) in serialisable_rating_service_actions ]
         
     
     def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
@@ -71,9 +69,9 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
             # So, let's just dupe and purge later on, in serialisation
             for ( service_key_encoded, action ) in serialisable_service_actions:
                 
-                service_key = service_key_encoded.decode( 'hex' )
+                service_key = bytes.fromhex( service_key_encoded )
                 
-                import ClientTags
+                from . import ClientTags
                 
                 tag_filter = ClientTags.TagFilter()
                 
@@ -82,8 +80,8 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
                 rating_service_actions.append( ( service_key, action ) )
                 
             
-            serialisable_tag_service_actions = [ ( service_key.encode( 'hex' ), action, tag_filter.GetSerialisableTuple() ) for ( service_key, action, tag_filter ) in tag_service_actions ]
-            serialisable_rating_service_actions = [ ( service_key.encode( 'hex' ), action ) for ( service_key, action ) in rating_service_actions ]
+            serialisable_tag_service_actions = [ ( service_key.hex(), action, tag_filter.GetSerialisableTuple() ) for ( service_key, action, tag_filter ) in tag_service_actions ]
+            serialisable_rating_service_actions = [ ( service_key.hex(), action ) for ( service_key, action ) in rating_service_actions ]
             
             sync_archive = delete_second_file
             delete_both_files = False
@@ -104,42 +102,35 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
             return ( 3, new_serialisable_info )
             
         
-    
-    def GetDeletedHashes( self, first_media, second_media ):
-        
-        first_hashes = first_media.GetHashes()
-        second_hashes = second_media.GetHashes()
-        
-        if self._delete_second_file:
+        if version == 3:
             
-            return second_hashes
+            ( serialisable_tag_service_actions, serialisable_rating_service_actions, delete_second_file, sync_archive, delete_both_files, sync_urls_action ) = old_serialisable_info
             
-        elif self._delete_both_files:
+            new_serialisable_info = ( serialisable_tag_service_actions, serialisable_rating_service_actions, sync_archive, sync_urls_action )
             
-            return first_hashes.union( second_hashes )
-            
-        else:
-            
-            return set()
+            return ( 4, new_serialisable_info )
             
         
     
-    def SetTuple( self, tag_service_actions, rating_service_actions, delete_second_file, sync_archive, delete_both_files, sync_urls_action ):
+    def SetTuple( self, tag_service_actions, rating_service_actions, sync_archive, sync_urls_action ):
         
         self._tag_service_actions = tag_service_actions
         self._rating_service_actions = rating_service_actions
-        self._delete_second_file = delete_second_file
         self._sync_archive = sync_archive
-        self._delete_both_files = delete_both_files
         self._sync_urls_action = sync_urls_action
         
     
     def ToTuple( self ):
         
-        return ( self._tag_service_actions, self._rating_service_actions, self._delete_second_file, self._sync_archive, self._delete_both_files, self._sync_urls_action )
+        return ( self._tag_service_actions, self._rating_service_actions, self._sync_archive, self._sync_urls_action )
         
     
-    def ProcessPairIntoContentUpdates( self, first_media, second_media ):
+    def ProcessPairIntoContentUpdates( self, first_media, second_media, delete_first = False, delete_second = False, delete_both = False, file_deletion_reason = None ):
+        
+        if file_deletion_reason is None:
+            
+            file_deletion_reason = 'unknown reason'
+            
         
         service_keys_to_content_updates = collections.defaultdict( list )
         
@@ -174,38 +165,51 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
                 add_content_action = HC.CONTENT_UPDATE_PEND
                 
             
-            first_current_tags = first_media.GetTagsManager().GetCurrent( service_key )
-            second_current_tags = second_media.GetTagsManager().GetCurrent( service_key )
+            first_tags = first_media.GetTagsManager().GetCurrentAndPending( service_key )
+            second_tags = second_media.GetTagsManager().GetCurrentAndPending( service_key )
             
-            first_current_tags = tag_filter.Filter( first_current_tags )
-            second_current_tags = tag_filter.Filter( second_current_tags )
+            first_tags = tag_filter.Filter( first_tags )
+            second_tags = tag_filter.Filter( second_tags )
             
             if action == HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE:
                 
-                first_needs = second_current_tags.difference( first_current_tags )
-                second_needs = first_current_tags.difference( second_current_tags )
+                first_needs = second_tags.difference( first_tags )
+                second_needs = first_tags.difference( second_tags )
                 
                 content_updates.extend( ( HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, add_content_action, ( tag, first_hashes ) ) for tag in first_needs ) )
                 content_updates.extend( ( HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, add_content_action, ( tag, second_hashes ) ) for tag in second_needs ) )
                 
             elif action == HC.CONTENT_MERGE_ACTION_COPY:
                 
-                first_needs = second_current_tags.difference( first_current_tags )
+                first_needs = second_tags.difference( first_tags )
                 
                 content_updates.extend( ( HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, add_content_action, ( tag, first_hashes ) ) for tag in first_needs ) )
                 
             elif service_type == HC.LOCAL_TAG and action == HC.CONTENT_MERGE_ACTION_MOVE:
                 
-                first_needs = second_current_tags.difference( first_current_tags )
+                first_needs = second_tags.difference( first_tags )
                 
                 content_updates.extend( ( HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, add_content_action, ( tag, first_hashes ) ) for tag in first_needs ) )
-                content_updates.extend( ( HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_DELETE, ( tag, second_hashes ) ) for tag in second_current_tags ) )
+                content_updates.extend( ( HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_DELETE, ( tag, second_hashes ) ) for tag in second_tags ) )
                 
             
             if len( content_updates ) > 0:
                 
                 service_keys_to_content_updates[ service_key ].extend( content_updates )
                 
+            
+        
+        def worth_updating_rating( source_rating, dest_rating ):
+            
+            if source_rating is not None:
+                
+                if dest_rating is None or source_rating > dest_rating:
+                    
+                    return True
+                    
+                
+            
+            return False
             
         
         for ( service_key, action ) in self._rating_service_actions:
@@ -226,28 +230,18 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
             
             if action == HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE:
                 
-                if first_current_value == second_current_value:
-                    
-                    continue
-                    
-                
-                if first_current_value is None and second_current_value is not None:
-                    
-                    content_updates.append( HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( second_current_value, first_hashes ) ) )
-                    
-                elif first_current_value is not None and second_current_value is None:
+                if worth_updating_rating( first_current_value, second_current_value ):
                     
                     content_updates.append( HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( first_current_value, second_hashes ) ) )
+                    
+                elif worth_updating_rating( second_current_value, first_current_value ):
+                    
+                    content_updates.append( HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( second_current_value, first_hashes ) ) )
                     
                 
             elif action == HC.CONTENT_MERGE_ACTION_COPY:
                 
-                if first_current_value == second_current_value:
-                    
-                    continue
-                    
-                
-                if first_current_value is None and second_current_value is not None:
+                if worth_updating_rating( second_current_value, first_current_value ):
                     
                     content_updates.append( HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( second_current_value, first_hashes ) ) )
                     
@@ -256,7 +250,7 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
                 
                 if second_current_value is not None:
                     
-                    if first_current_value is None:
+                    if worth_updating_rating( second_current_value, first_current_value ):
                         
                         content_updates.append( HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( second_current_value, first_hashes ) ) )
                         
@@ -333,14 +327,17 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
         
         deletee_media = []
         
-        if self._delete_second_file or self._delete_both_files:
+        if delete_first or delete_second or delete_both:
             
-            if self._delete_both_files:
+            if delete_first or delete_both:
                 
                 deletee_media.append( first_media )
                 
             
-            deletee_media.append( second_media )
+            if delete_second or delete_both:
+                
+                deletee_media.append( second_media )
+                
             
         
         for media in deletee_media:
@@ -362,7 +359,7 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
             
             if deletee_service_key is not None:
                 
-                content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, media.GetHashes() )
+                content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, media.GetHashes(), reason = file_deletion_reason )
                 
                 service_keys_to_content_updates[ deletee_service_key ].append( content_update )
                 

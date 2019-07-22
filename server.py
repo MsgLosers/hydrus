@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 # This program is free software. It comes without any warranty, to
 # the extent permitted by applicable law. You can redistribute it
@@ -7,6 +7,10 @@
 # http://sam.zoy.org/wtfpl/COPYING for more details.
 
 try:
+    
+    from include import HydrusPy2To3
+    
+    HydrusPy2To3.do_2to3_test()
     
     import locale
     
@@ -39,6 +43,8 @@ try:
     argparser.add_argument( '-d', '--db_dir', help = 'set an external db location' )
     argparser.add_argument( '--no_daemons', action='store_true', help = 'run without background daemons' )
     argparser.add_argument( '--no_wal', action='store_true', help = 'run without WAL db journalling' )
+    argparser.add_argument( '--no_db_temp_files', action='store_true', help = 'run the db entirely in memory' )
+    argparser.add_argument( '--temp_dir', help = 'override the program\'s temporary directory' )
     
     result = argparser.parse_args()
     
@@ -48,9 +54,9 @@ try:
         
         db_dir = HC.DEFAULT_DB_DIR
         
-        if not HydrusPaths.DirectoryIsWritable( db_dir ):
+        if not HydrusPaths.DirectoryIsWritable( db_dir ) or HC.RUNNING_FROM_OSX_APP:
             
-            db_dir = os.path.join( os.path.expanduser( '~' ), 'Hydrus' )
+            db_dir = HC.USERPATH_DB_DIR
             
         
     else:
@@ -60,72 +66,37 @@ try:
     
     db_dir = HydrusPaths.ConvertPortablePathToAbsPath( db_dir, HC.BASE_DIR )
     
-    
     try:
         
         HydrusPaths.MakeSureDirectoryExists( db_dir )
         
     except:
         
-        raise Exception( 'Could not ensure db path ' + db_dir + ' exists! Check the location is correct and that you have permission to write to it!' )
+        raise Exception( 'Could not ensure db path "{}" exists! Check the location is correct and that you have permission to write to it!'.format( db_dir ) )
         
     
-    no_daemons = result.no_daemons
-    no_wal = result.no_wal
+    if not os.path.isdir( db_dir ):
+        
+        raise Exception( 'The given db path "{}" is not a directory!'.format( db_dir ) )
+        
+    
+    if not HydrusPaths.DirectoryIsWritable( db_dir ):
+        
+        raise Exception( 'The given db path "{}" is not a writable-to!'.format( db_dir ) )
+        
+    
+    HG.no_daemons = result.no_daemons
+    HG.no_wal = result.no_wal
+    HG.no_db_temp_files = result.no_db_temp_files
+    
+    if result.temp_dir is not None:
+        
+        HydrusPaths.SetEnvTempDir( result.temp_dir )
+        
     
     #
     
     action = ServerController.ProcessStartingAction( db_dir, action )
-    
-    with HydrusLogger.HydrusLogger( db_dir, 'server' ) as logger:
-        
-        try:
-            
-            if action in ( 'stop', 'restart' ):
-                
-                ServerController.ShutdownSiblingInstance( db_dir )
-                
-            
-            if action in ( 'start', 'restart' ):
-                
-                HydrusData.Print( u'Initialising controller\u2026' )
-                
-                threading.Thread( target = reactor.run, kwargs = { 'installSignalHandlers' : 0 } ).start()
-                
-                controller = ServerController.Controller( db_dir, no_daemons, no_wal )
-                
-                controller.Run()
-                
-            
-        except HydrusExceptions.PermissionException as e:
-            
-            error = HydrusData.ToUnicode( e )
-            
-            HydrusData.Print( error )
-            
-        except:
-            
-            error = traceback.format_exc()
-            
-            HydrusData.Print( 'Hydrus server failed' )
-            
-            HydrusData.Print( traceback.format_exc() )
-            
-        finally:
-            
-            HG.view_shutdown = True
-            HG.model_shutdown = True
-            
-            try: controller.pubimmediate( 'wake_daemons' )
-            except: pass
-            
-            reactor.callFromThread( reactor.stop )
-            
-        
-    
-except HydrusExceptions.PermissionException as e:
-    
-    HydrusData.Print( e )
     
 except Exception as e:
     
@@ -138,11 +109,56 @@ except Exception as e:
         
         dest_path = os.path.join( db_dir, 'crash.log' )
         
-        with open( dest_path, 'wb' ) as f:
+        with open( dest_path, 'w', encoding = 'utf-8' ) as f:
             
             f.write( traceback.format_exc() )
             
         
-        print( 'Critical error occurred! Details written to crash.log!' )
+        print( 'Critical boot error occurred! Details written to crash.log!' )
+        
+    
+with HydrusLogger.HydrusLogger( db_dir, 'server' ) as logger:
+    
+    try:
+        
+        if action in ( 'stop', 'restart' ):
+            
+            ServerController.ShutdownSiblingInstance( db_dir )
+            
+        
+        if action in ( 'start', 'restart' ):
+            
+            HydrusData.Print( 'Initialising controller\u2026' )
+            
+            threading.Thread( target = reactor.run, name = 'twisted', kwargs = { 'installSignalHandlers' : 0 } ).start()
+            
+            controller = ServerController.Controller( db_dir )
+            
+            controller.Run()
+            
+        
+    except ( HydrusExceptions.InsufficientCredentialsException, HydrusExceptions.ShutdownException ) as e:
+        
+        error = str( e )
+        
+        HydrusData.Print( error )
+        
+    except:
+        
+        error = traceback.format_exc()
+        
+        HydrusData.Print( 'Hydrus server failed' )
+        
+        HydrusData.Print( traceback.format_exc() )
+        
+    finally:
+        
+        HG.view_shutdown = True
+        HG.model_shutdown = True
+        
+        try: controller.pubimmediate( 'wake_daemons' )
+        except: pass
+        
+        reactor.callFromThread( reactor.stop )
         
     

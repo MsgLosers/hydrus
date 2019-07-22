@@ -1,35 +1,37 @@
-import ClientConstants as CC
-import ClientDefaults
-import ClientDownloading
-import ClientGUIACDropdown
-import ClientGUICommon
-import ClientGUIControls
-import ClientGUIDialogs
-import ClientGUIDialogsQuick
-import ClientGUIFileSeedCache
-import ClientGUIGallerySeedLog
-import ClientGUIListBoxes
-import ClientGUIListCtrl
-import ClientGUIMenus
-import ClientGUIOptionsPanels
-import ClientGUIScrolledPanels
-import ClientGUIScrolledPanelsEdit
-import ClientGUIShortcuts
-import ClientGUITime
-import ClientGUITopLevelWindows
-import ClientImporting
-import ClientImportFileSeeds
-import ClientImportGallerySeeds
-import ClientImportLocal
-import ClientImportOptions
+from . import ClientConstants as CC
+from . import ClientDefaults
+from . import ClientDownloading
+from . import ClientGUIACDropdown
+from . import ClientGUICommon
+from . import ClientGUIControls
+from . import ClientGUIDialogs
+from . import ClientGUIDialogsQuick
+from . import ClientGUIFileSeedCache
+from . import ClientGUIFunctions
+from . import ClientGUIGallerySeedLog
+from . import ClientGUIListBoxes
+from . import ClientGUIListCtrl
+from . import ClientGUIMenus
+from . import ClientGUIOptionsPanels
+from . import ClientGUIScrolledPanels
+from . import ClientGUIScrolledPanelsEdit
+from . import ClientGUIShortcuts
+from . import ClientGUITime
+from . import ClientGUITopLevelWindows
+from . import ClientImporting
+from . import ClientImportFileSeeds
+from . import ClientImportGallerySeeds
+from . import ClientImportLocal
+from . import ClientImportOptions
+from . import ClientTags
 import collections
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
-import HydrusTags
-import HydrusText
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
+from . import HydrusTags
+from . import HydrusText
 import os
 import re
 import wx
@@ -198,9 +200,9 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
         
         tags = HydrusTags.CleanTags( tags )
         
-        siblings_manager = HG.client_controller.GetManager( 'tag_siblings' )
-        parents_manager = HG.client_controller.GetManager( 'tag_parents' )
-        tag_censorship_manager = HG.client_controller.GetManager( 'tag_censorship' )
+        siblings_manager = HG.client_controller.tag_siblings_manager
+        parents_manager = HG.client_controller.tag_parents_manager
+        tag_censorship_manager = HG.client_controller.tag_censorship_manager
         
         tags = siblings_manager.CollapseTags( self._service_key, tags )
         tags = parents_manager.ExpandTags( self._service_key, tags )
@@ -228,21 +230,17 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
             
             self._quick_namespaces_panel = ClientGUICommon.StaticBox( self, 'quick namespaces' )
             
+            quick_namespaces_listctrl_panel = ClientGUIListCtrl.BetterListCtrlPanel( self._quick_namespaces_panel )
+            
             columns = [ ( 'namespace', 12 ), ( 'regex', -1 ) ]
             
-            self._quick_namespaces_list = ClientGUIListCtrl.BetterListCtrl( self._quick_namespaces_panel, 'quick_namespaces', 4, 20, columns, self._ConvertQuickRegexDataToListCtrlTuples, use_simple_delete = True, activation_callback = self.EditQuickNamespaces )
+            self._quick_namespaces_list = ClientGUIListCtrl.BetterListCtrl( quick_namespaces_listctrl_panel, 'quick_namespaces', 4, 20, columns, self._ConvertQuickRegexDataToListCtrlTuples, use_simple_delete = True, activation_callback = self.EditQuickNamespaces )
             
-            self._add_quick_namespace_button = wx.Button( self._quick_namespaces_panel, label = 'add' )
-            self._add_quick_namespace_button.Bind( wx.EVT_BUTTON, self.EventAddQuickNamespace )
-            self._add_quick_namespace_button.SetMinSize( ( 20, -1 ) )
+            quick_namespaces_listctrl_panel.SetListCtrl( self._quick_namespaces_list )
             
-            self._edit_quick_namespace_button = wx.Button( self._quick_namespaces_panel, label = 'edit' )
-            self._edit_quick_namespace_button.Bind( wx.EVT_BUTTON, self.EventEditQuickNamespace )
-            self._edit_quick_namespace_button.SetMinSize( ( 20, -1 ) )
-            
-            self._delete_quick_namespace_button = wx.Button( self._quick_namespaces_panel, label = 'delete' )
-            self._delete_quick_namespace_button.Bind( wx.EVT_BUTTON, self.EventDeleteQuickNamespace )
-            self._delete_quick_namespace_button.SetMinSize( ( 20, -1 ) )
+            quick_namespaces_listctrl_panel.AddButton( 'add', self.AddQuickNamespace )
+            quick_namespaces_listctrl_panel.AddButton( 'edit', self.EditQuickNamespaces, enabled_only_on_selection = True )
+            quick_namespaces_listctrl_panel.AddDeleteButton()
             
             #
             
@@ -292,14 +290,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
             
             #
             
-            button_box = wx.BoxSizer( wx.HORIZONTAL )
-            
-            button_box.Add( self._add_quick_namespace_button, CC.FLAGS_EXPAND_BOTH_WAYS )
-            button_box.Add( self._edit_quick_namespace_button, CC.FLAGS_EXPAND_BOTH_WAYS )
-            button_box.Add( self._delete_quick_namespace_button, CC.FLAGS_EXPAND_BOTH_WAYS )
-            
-            self._quick_namespaces_panel.Add( self._quick_namespaces_list, CC.FLAGS_EXPAND_BOTH_WAYS )
-            self._quick_namespaces_panel.Add( button_box, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
+            self._quick_namespaces_panel.Add( quick_namespaces_listctrl_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
             
             #
             
@@ -351,6 +342,25 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
             return ( display_tuple, sort_tuple )
             
         
+        def AddQuickNamespace( self ):
+            
+            from . import ClientGUIDialogs
+            
+            with ClientGUIDialogs.DialogInputNamespaceRegex( self ) as dlg:
+                
+                if dlg.ShowModal() == wx.ID_OK:
+                    
+                    ( namespace, regex ) = dlg.GetInfo()
+                    
+                    data = ( namespace, regex )
+                    
+                    self._quick_namespaces_list.AddDatas( ( data, ) )
+                    
+                    self._refresh_callable()
+                    
+                
+            
+        
         def EditQuickNamespaces( self ):
             
             data_to_edit = self._quick_namespaces_list.GetData( only_selected = True )
@@ -359,7 +369,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
                 
                 ( namespace, regex ) = old_data
                 
-                import ClientGUIDialogs
+                from . import ClientGUIDialogs
                 
                 with ClientGUIDialogs.DialogInputNamespaceRegex( self, namespace = namespace, regex = regex ) as dlg:
                     
@@ -390,13 +400,13 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
                 
                 try:
                     
-                    re.compile( regex, flags = re.UNICODE )
+                    re.compile( regex )
                     
                 except Exception as e:
                     
                     text = 'That regex would not compile!'
                     text += os.linesep * 2
-                    text += HydrusData.ToUnicode( e )
+                    text += str( e )
                     
                     wx.MessageBox( text )
                     
@@ -405,39 +415,10 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
                 
                 self._regexes.Append( regex )
                 
-                self._regex_box.Clear()
+                self._regex_box.ChangeValue( '' )
                 
                 self._refresh_callable()
                 
-            
-        
-        def EventAddQuickNamespace( self, event ):
-            
-            import ClientGUIDialogs
-            
-            with ClientGUIDialogs.DialogInputNamespaceRegex( self ) as dlg:
-                
-                if dlg.ShowModal() == wx.ID_OK:
-                    
-                    ( namespace, regex ) = dlg.GetInfo()
-                    
-                    data = ( namespace, regex )
-                    
-                    self._quick_namespaces_list.AddDatas( ( data, ) )
-                    
-                    self._refresh_callable()
-                    
-                
-            
-        
-        def EventDeleteQuickNamespace( self, event ):
-            
-            self.DeleteQuickNamespaces()
-            
-        
-        def EventEditQuickNamespace( self, event ):
-            
-            self.EditQuickNamespaces()
             
         
         def EventNumNamespaceChanged( self, event ):
@@ -511,7 +492,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
             
             expand_parents = True
             
-            self._tag_box = ClientGUIACDropdown.AutoCompleteDropdownTagsWrite( self._tags_panel, self.EnterTags, expand_parents, CC.LOCAL_FILE_SERVICE_KEY, service_key )
+            self._tag_box = ClientGUIACDropdown.AutoCompleteDropdownTagsWrite( self._tags_panel, self.EnterTags, expand_parents, CC.LOCAL_FILE_SERVICE_KEY, service_key, show_paste_button = True )
             
             self._tags_paste_button = ClientGUICommon.BetterButton( self._tags_panel, 'paste tags', self._PasteTags )
             
@@ -527,7 +508,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
             
             expand_parents = True
             
-            self._single_tag_box = ClientGUIACDropdown.AutoCompleteDropdownTagsWrite( self._single_tags_panel, self.EnterTagsSingle, expand_parents, CC.LOCAL_FILE_SERVICE_KEY, service_key )
+            self._single_tag_box = ClientGUIACDropdown.AutoCompleteDropdownTagsWrite( self._single_tags_panel, self.EnterTagsSingle, expand_parents, CC.LOCAL_FILE_SERVICE_KEY, service_key, show_paste_button = True )
             
             self.SetSelectedPaths( [] )
             
@@ -583,7 +564,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
             self._filename_checkbox.SetValue( add_filename_boolean )
             self._filename_namespace.SetValue( add_filename_namespace )
             
-            for ( index, ( dir_boolean, dir_namespace ) ) in directory_dict.items():
+            for ( index, ( dir_boolean, dir_namespace ) ) in list(directory_dict.items()):
                 
                 ( dir_checkbox, dir_namespace_textctrl ) = self._directory_namespace_controls[ index ]
                 
@@ -646,7 +627,16 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
         
         def _GetTagsFromClipboard( self ):
             
-            text = HG.client_controller.GetClipboardText()
+            try:
+                
+                text = HG.client_controller.GetClipboardText()
+                
+            except HydrusExceptions.DataMissing as e:
+                
+                wx.MessageBox( str( e ) )
+                
+                return
+                
             
             try:
                 
@@ -670,7 +660,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
                 
             except Exception as e:
                 
-                wx.MessageBox( HydrusData.ToUnicode( e ) )
+                wx.MessageBox( str( e ) )
                 
                 return
                 
@@ -686,7 +676,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
                 
             except Exception as e:
                 
-                wx.MessageBox( HydrusData.ToUnicode( e ) )
+                wx.MessageBox( str( e ) )
                 
                 return
                 
@@ -711,7 +701,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
         
         def EnterTags( self, tags ):
             
-            tag_parents_manager = HG.client_controller.GetManager( 'tag_parents' )
+            tag_parents_manager = HG.client_controller.tag_parents_manager
             
             parents = set()
             
@@ -733,7 +723,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
         
         def EnterTagsSingle( self, tags ):
             
-            tag_parents_manager = HG.client_controller.GetManager( 'tag_parents' )
+            tag_parents_manager = HG.client_controller.tag_parents_manager
             
             parents = set()
             
@@ -832,7 +822,7 @@ class FilenameTaggingOptionsPanel( wx.Panel ):
             
             directories_dict = {}
             
-            for ( index, ( dir_checkbox, dir_namespace_textctrl ) ) in self._directory_namespace_controls.items():
+            for ( index, ( dir_checkbox, dir_namespace_textctrl ) ) in list(self._directory_namespace_controls.items()):
                 
                 directories_dict[ index ] = ( dir_checkbox.GetValue(), dir_namespace_textctrl.GetValue() )
                 
@@ -1114,9 +1104,9 @@ class EditImportFolderPanel( ClientGUIScrolledPanels.EditPanel ):
             self._location_failed.SetPath( action_locations[ CC.STATUS_ERROR ] )
             
         
-        good_tag_service_keys_to_filename_tagging_options = { service_key : filename_tagging_options for ( service_key, filename_tagging_options ) in tag_service_keys_to_filename_tagging_options.items() if HG.client_controller.services_manager.ServiceExists( service_key ) }
+        good_tag_service_keys_to_filename_tagging_options = { service_key : filename_tagging_options for ( service_key, filename_tagging_options ) in list(tag_service_keys_to_filename_tagging_options.items()) if HG.client_controller.services_manager.ServiceExists( service_key ) }
         
-        self._filename_tagging_options.AddDatas( good_tag_service_keys_to_filename_tagging_options.items() )
+        self._filename_tagging_options.AddDatas( list(good_tag_service_keys_to_filename_tagging_options.items()) )
         
         self._filename_tagging_options.Sort()
         
@@ -1426,7 +1416,7 @@ class EditImportFolderPanel( ClientGUIScrolledPanels.EditPanel ):
         self._CheckValid()
         
         name = self._name.GetValue()
-        path = HydrusData.ToUnicode( self._path.GetPath() )
+        path = self._path.GetPath()
         mimes = self._mimes.GetValue()
         file_import_options = self._file_import_options.GetValue()
         tag_import_options = self._tag_import_options.GetValue()
@@ -1437,25 +1427,25 @@ class EditImportFolderPanel( ClientGUIScrolledPanels.EditPanel ):
         actions[ CC.STATUS_SUCCESSFUL_AND_NEW ] = self._action_successful.GetChoice()
         if actions[ CC.STATUS_SUCCESSFUL_AND_NEW ] == CC.IMPORT_FOLDER_MOVE:
             
-            action_locations[ CC.STATUS_SUCCESSFUL_AND_NEW ] = HydrusData.ToUnicode( self._location_successful.GetPath() )
+            action_locations[ CC.STATUS_SUCCESSFUL_AND_NEW ] = self._location_successful.GetPath()
             
         
         actions[ CC.STATUS_SUCCESSFUL_BUT_REDUNDANT ] = self._action_redundant.GetChoice()
         if actions[ CC.STATUS_SUCCESSFUL_BUT_REDUNDANT ] == CC.IMPORT_FOLDER_MOVE:
             
-            action_locations[ CC.STATUS_SUCCESSFUL_BUT_REDUNDANT ] = HydrusData.ToUnicode( self._location_redundant.GetPath() )
+            action_locations[ CC.STATUS_SUCCESSFUL_BUT_REDUNDANT ] = self._location_redundant.GetPath()
             
         
         actions[ CC.STATUS_DELETED ] = self._action_deleted.GetChoice()
         if actions[ CC.STATUS_DELETED] == CC.IMPORT_FOLDER_MOVE:
             
-            action_locations[ CC.STATUS_DELETED ] = HydrusData.ToUnicode( self._location_deleted.GetPath() )
+            action_locations[ CC.STATUS_DELETED ] = self._location_deleted.GetPath()
             
         
         actions[ CC.STATUS_ERROR ] = self._action_failed.GetChoice()
         if actions[ CC.STATUS_ERROR ] == CC.IMPORT_FOLDER_MOVE:
             
-            action_locations[ CC.STATUS_ERROR ] = HydrusData.ToUnicode( self._location_failed.GetPath() )
+            action_locations[ CC.STATUS_ERROR ] = self._location_failed.GetPath()
             
         
         period = self._period.GetValue()
@@ -1484,33 +1474,26 @@ class EditLocalImportFilenameTaggingPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._paths = paths
         
-        self._tag_repositories = ClientGUICommon.ListBook( self )
+        
+        self._tag_repositories = ClientGUICommon.BetterNotebook( self )
         
         #
         
-        services = HG.client_controller.services_manager.GetServices( ( HC.TAG_REPOSITORY, ) )
-        
-        for service in services:
-            
-            if service.HasPermission( HC.CONTENT_TYPE_MAPPINGS, HC.PERMISSION_ACTION_CREATE ):
-                
-                service_key = service.GetServiceKey()
-                
-                name = service.GetName()
-                
-                self._tag_repositories.AddPageArgs( name, service_key, self._Panel, ( self._tag_repositories, service_key, paths ), {} )
-                
-            
-        
-        page = self._Panel( self._tag_repositories, CC.LOCAL_TAG_SERVICE_KEY, paths )
-        
-        name = CC.LOCAL_TAG_SERVICE_KEY
-        
-        self._tag_repositories.AddPage( name, name, page )
+        services = HG.client_controller.services_manager.GetServices( HC.TAG_SERVICES, randomised = False )
         
         default_tag_repository_key = HC.options[ 'default_tag_repository' ]
         
-        self._tag_repositories.Select( default_tag_repository_key )
+        for service in services:
+            
+            service_key = service.GetServiceKey()
+            name = service.GetName()
+            
+            page = self._Panel( self._tag_repositories, service_key, paths )
+            
+            select = service_key == default_tag_repository_key
+            
+            self._tag_repositories.AddPage( page, name, select = select )
+            
         
         #
         
@@ -1523,16 +1506,24 @@ class EditLocalImportFilenameTaggingPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def GetValue( self ):
         
-        paths_to_tags = collections.defaultdict( dict )
+        paths_to_service_keys_to_tags = collections.defaultdict( ClientTags.ServiceKeysToTags )
         
-        for page in self._tag_repositories.GetActivePages():
+        for page in self._tag_repositories.GetPages():
             
             ( service_key, page_of_paths_to_tags ) = page.GetInfo()
             
-            for ( path, tags ) in page_of_paths_to_tags.items(): paths_to_tags[ path ][ service_key ] = tags
+            for ( path, tags ) in page_of_paths_to_tags.items():
+                
+                if len( tags ) == 0:
+                    
+                    continue
+                    
+                
+                paths_to_service_keys_to_tags[ path ][ service_key ] = tags
+                
             
         
-        return paths_to_tags
+        return paths_to_service_keys_to_tags
         
     
     class _Panel( wx.Panel ):
@@ -1546,7 +1537,7 @@ class EditLocalImportFilenameTaggingPanel( ClientGUIScrolledPanels.EditPanel ):
             
             columns = [ ( '#', 4 ), ( 'path', 40 ), ( 'tags', -1 ) ]
             
-            self._paths_list = ClientGUIListCtrl.BetterListCtrl( self, 'paths_to_tags', 25, 40, columns, self._ConvertDataToListCtrlTuples )
+            self._paths_list = ClientGUIListCtrl.BetterListCtrl( self, 'paths_to_tags', 10, 40, columns, self._ConvertDataToListCtrlTuples )
             
             self._paths_list.Bind( wx.EVT_LIST_ITEM_SELECTED, self.EventItemSelected )
             self._paths_list.Bind( wx.EVT_LIST_ITEM_DESELECTED, self.EventItemSelected )
@@ -1564,7 +1555,7 @@ class EditLocalImportFilenameTaggingPanel( ClientGUIScrolledPanels.EditPanel ):
             
             #
             
-            vbox = wx.BoxSizer( wx.VERTICAL )
+            vbox = ClientGUICommon.BetterBoxSizer( wx.VERTICAL )
             
             vbox.Add( self._paths_list, CC.FLAGS_EXPAND_BOTH_WAYS )
             vbox.Add( self._filename_tagging_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
@@ -1730,19 +1721,17 @@ class GalleryImportPanel( ClientGUICommon.StaticBox ):
         
         self._import_queue_panel = ClientGUICommon.StaticBox( self, 'import queue' )
         
-        self._current_action = ClientGUICommon.BetterStaticText( self._import_queue_panel, style = wx.ST_ELLIPSIZE_END )
+        self._file_status = ClientGUICommon.BetterStaticText( self._import_queue_panel, style = wx.ST_ELLIPSIZE_END )
         self._file_seed_cache_control = ClientGUIFileSeedCache.FileSeedCacheStatusControl( self._import_queue_panel, HG.client_controller, self._page_key )
         self._file_download_control = ClientGUIControls.NetworkJobControl( self._import_queue_panel )
         
-        self._files_pause_button = wx.BitmapButton( self._import_queue_panel, bitmap = CC.GlobalBMPs.pause )
-        self._files_pause_button.Bind( wx.EVT_BUTTON, self.EventFilesPause )
+        self._files_pause_button = ClientGUICommon.BetterBitmapButton( self._import_queue_panel, CC.GlobalBMPs.pause, self.PauseFiles )
         
         self._gallery_panel = ClientGUICommon.StaticBox( self, 'gallery parser' )
         
         self._gallery_status = ClientGUICommon.BetterStaticText( self._gallery_panel, style = wx.ST_ELLIPSIZE_END )
         
-        self._gallery_pause_button = wx.BitmapButton( self._gallery_panel, bitmap = CC.GlobalBMPs.pause )
-        self._gallery_pause_button.Bind( wx.EVT_BUTTON, self.EventGalleryPause )
+        self._gallery_pause_button = ClientGUICommon.BetterBitmapButton( self._gallery_panel, CC.GlobalBMPs.pause, self.PauseGallery )
         
         self._gallery_seed_log_control = ClientGUIGallerySeedLog.GallerySeedLogStatusControl( self._gallery_panel, HG.client_controller, False, True, page_key = self._page_key )
         
@@ -1775,7 +1764,7 @@ class GalleryImportPanel( ClientGUICommon.StaticBox ):
         
         hbox = wx.BoxSizer( wx.HORIZONTAL )
         
-        hbox.Add( self._current_action, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
+        hbox.Add( self._file_status, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
         hbox.Add( self._files_pause_button, CC.FLAGS_VCENTER )
         
         self._import_queue_panel.Add( hbox, CC.FLAGS_EXPAND_PERPENDICULAR )
@@ -1825,7 +1814,7 @@ class GalleryImportPanel( ClientGUICommon.StaticBox ):
             
             self._query_text.SetValue( '' )
             
-            self._current_action.SetLabelText( '' )
+            self._file_status.SetLabelText( '' )
             
             self._gallery_status.SetLabelText( '' )
             
@@ -1875,24 +1864,24 @@ class GalleryImportPanel( ClientGUICommon.StaticBox ):
         
         if self._gallery_import is not None:
             
-            ( gallery_status, current_action, files_paused, gallery_paused ) = self._gallery_import.GetStatus()
+            ( gallery_status, file_status, files_paused, gallery_paused ) = self._gallery_import.GetStatus()
             
             if files_paused:
                 
-                ClientGUICommon.SetBitmapButtonBitmap( self._files_pause_button, CC.GlobalBMPs.play )
+                ClientGUIFunctions.SetBitmapButtonBitmap( self._files_pause_button, CC.GlobalBMPs.play )
                 
             else:
                 
-                ClientGUICommon.SetBitmapButtonBitmap( self._files_pause_button, CC.GlobalBMPs.pause )
+                ClientGUIFunctions.SetBitmapButtonBitmap( self._files_pause_button, CC.GlobalBMPs.pause )
                 
             
             if gallery_paused:
                 
-                ClientGUICommon.SetBitmapButtonBitmap( self._gallery_pause_button, CC.GlobalBMPs.play )
+                ClientGUIFunctions.SetBitmapButtonBitmap( self._gallery_pause_button, CC.GlobalBMPs.play )
                 
             else:
                 
-                ClientGUICommon.SetBitmapButtonBitmap( self._gallery_pause_button, CC.GlobalBMPs.pause )
+                ClientGUIFunctions.SetBitmapButtonBitmap( self._gallery_pause_button, CC.GlobalBMPs.pause )
                 
             
             if gallery_paused:
@@ -1911,17 +1900,17 @@ class GalleryImportPanel( ClientGUICommon.StaticBox ):
             
             if files_paused:
                 
-                if current_action == '':
+                if file_status == '':
                     
-                    current_action = 'paused'
+                    file_status = 'paused'
                     
                 else:
                     
-                    current_action = 'pausing - ' + current_action
+                    file_status = 'pausing - ' + file_status
                     
                 
             
-            self._current_action.SetLabelText( current_action )
+            self._file_status.SetLabelText( file_status )
             
             ( file_network_job, gallery_network_job ) = self._gallery_import.GetNetworkJobs()
             
@@ -1941,7 +1930,7 @@ class GalleryImportPanel( ClientGUICommon.StaticBox ):
         event.Skip()
         
     
-    def EventFilesPause( self, event ):
+    def PauseFiles( self ):
         
         if self._gallery_import is not None:
             
@@ -1951,7 +1940,7 @@ class GalleryImportPanel( ClientGUICommon.StaticBox ):
             
         
     
-    def EventGalleryPause( self, event ):
+    def PauseGallery( self ):
         
         if self._gallery_import is not None:
             
@@ -2160,7 +2149,16 @@ class TagImportOptionsButton( ClientGUICommon.BetterButton ):
     
     def _Paste( self ):
         
-        raw_text = HG.client_controller.GetClipboardText()
+        try:
+            
+            raw_text = HG.client_controller.GetClipboardText()
+            
+        except HydrusExceptions.DataMissing as e:
+            
+            wx.MessageBox( str( e ) )
+            
+            return
+            
         
         try:
             
@@ -2260,10 +2258,9 @@ class WatcherReviewPanel( ClientGUICommon.StaticBox ):
         
         imports_panel = ClientGUICommon.StaticBox( self._options_panel, 'file imports' )
         
-        self._files_pause_button = wx.BitmapButton( imports_panel, bitmap = CC.GlobalBMPs.pause )
-        self._files_pause_button.Bind( wx.EVT_BUTTON, self.EventPauseFiles )
+        self._files_pause_button = ClientGUICommon.BetterBitmapButton( imports_panel, CC.GlobalBMPs.pause, self.PauseFiles )
         
-        self._current_action = ClientGUICommon.BetterStaticText( imports_panel, style = wx.ST_ELLIPSIZE_END )
+        self._file_status = ClientGUICommon.BetterStaticText( imports_panel, style = wx.ST_ELLIPSIZE_END )
         self._file_seed_cache_control = ClientGUIFileSeedCache.FileSeedCacheStatusControl( imports_panel, HG.client_controller, self._page_key )
         self._file_download_control = ClientGUIControls.NetworkJobControl( imports_panel )
         
@@ -2273,8 +2270,7 @@ class WatcherReviewPanel( ClientGUICommon.StaticBox ):
         
         self._file_velocity_status = ClientGUICommon.BetterStaticText( checker_panel, style = wx.ST_ELLIPSIZE_END )
         
-        self._checking_pause_button = wx.BitmapButton( checker_panel, bitmap = CC.GlobalBMPs.pause )
-        self._checking_pause_button.Bind( wx.EVT_BUTTON, self.EventPauseChecking )
+        self._checking_pause_button = ClientGUICommon.BetterBitmapButton( checker_panel, CC.GlobalBMPs.pause, self.PauseChecking )
         
         self._watcher_status = ClientGUICommon.BetterStaticText( checker_panel, style = wx.ST_ELLIPSIZE_END )
         
@@ -2301,7 +2297,7 @@ class WatcherReviewPanel( ClientGUICommon.StaticBox ):
         
         hbox = wx.BoxSizer( wx.HORIZONTAL )
         
-        hbox.Add( self._current_action, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
+        hbox.Add( self._file_status, CC.FLAGS_VCENTER_EXPAND_DEPTH_ONLY )
         hbox.Add( self._files_pause_button, CC.FLAGS_VCENTER )
         
         imports_panel.Add( hbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
@@ -2383,7 +2379,7 @@ class WatcherReviewPanel( ClientGUICommon.StaticBox ):
             
             self._watcher_url.SetValue( '' )
             
-            self._current_action.SetLabelText( '' )
+            self._file_status.SetLabelText( '' )
             
             self._file_velocity_status.SetLabelText( '' )
             
@@ -2440,27 +2436,27 @@ class WatcherReviewPanel( ClientGUICommon.StaticBox ):
         
         if self._watcher is not None:
             
-            ( current_action, files_paused, file_velocity_status, next_check_time, watcher_status, subject, checking_status, check_now, checking_paused ) = self._watcher.GetStatus()
+            ( file_status, files_paused, file_velocity_status, next_check_time, watcher_status, subject, checking_status, check_now, checking_paused ) = self._watcher.GetStatus()
             
             if files_paused:
                 
-                if current_action == '':
+                if file_status == '':
                     
-                    current_action = 'paused'
+                    file_status = 'paused'
                     
                 else:
                     
-                    current_action = 'pausing, ' + current_action
+                    file_status = 'pausing, ' + file_status
                     
                 
-                ClientGUICommon.SetBitmapButtonBitmap( self._files_pause_button, CC.GlobalBMPs.play )
+                ClientGUIFunctions.SetBitmapButtonBitmap( self._files_pause_button, CC.GlobalBMPs.play )
                 
             else:
                 
-                ClientGUICommon.SetBitmapButtonBitmap( self._files_pause_button, CC.GlobalBMPs.pause )
+                ClientGUIFunctions.SetBitmapButtonBitmap( self._files_pause_button, CC.GlobalBMPs.pause )
                 
             
-            self._current_action.SetLabelText( current_action )
+            self._file_status.SetLabelText( file_status )
             
             self._file_velocity_status.SetLabelText( file_velocity_status )
             
@@ -2471,7 +2467,7 @@ class WatcherReviewPanel( ClientGUICommon.StaticBox ):
                     watcher_status = 'paused'
                     
                 
-                ClientGUICommon.SetBitmapButtonBitmap( self._checking_pause_button, CC.GlobalBMPs.play )
+                ClientGUIFunctions.SetBitmapButtonBitmap( self._checking_pause_button, CC.GlobalBMPs.play )
                 
             else:
                 
@@ -2487,7 +2483,7 @@ class WatcherReviewPanel( ClientGUICommon.StaticBox ):
                         
                     
                 
-                ClientGUICommon.SetBitmapButtonBitmap( self._checking_pause_button, CC.GlobalBMPs.pause )
+                ClientGUIFunctions.SetBitmapButtonBitmap( self._checking_pause_button, CC.GlobalBMPs.pause )
                 
             
             self._watcher_status.SetLabelText( watcher_status )
@@ -2539,21 +2535,21 @@ class WatcherReviewPanel( ClientGUICommon.StaticBox ):
             
         
     
-    def EventPauseFiles( self, event ):
+    def PauseChecking( self ):
         
         if self._watcher is not None:
             
-            self._watcher.PausePlayFiles()
+            self._watcher.PausePlayChecking()
             
             self._UpdateStatus()
             
         
     
-    def EventPauseChecking( self, event ):
+    def PauseFiles( self ):
         
         if self._watcher is not None:
             
-            self._watcher.PausePlayChecking()
+            self._watcher.PausePlayFiles()
             
             self._UpdateStatus()
             

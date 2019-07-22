@@ -1,17 +1,18 @@
-import ClientConstants as CC
-import ClientDownloading
-import ClientImportFileSeeds
-import ClientImportGallerySeeds
-import ClientImporting
-import ClientImportOptions
-import ClientNetworkingJobs
-import ClientPaths
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusPaths
-import HydrusSerialisable
+from . import ClientConstants as CC
+from . import ClientDownloading
+from . import ClientImportFileSeeds
+from . import ClientImportGallerySeeds
+from . import ClientImporting
+from . import ClientImportOptions
+from . import ClientNetworkingJobs
+from . import ClientPaths
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusPaths
+from . import HydrusSerialisable
+import itertools
 import threading
 import time
 import traceback
@@ -23,10 +24,7 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
     SERIALISABLE_NAME = 'Gallery Import'
     SERIALISABLE_VERSION = 2
     
-    def __init__( self, query = None, source_name = None, initial_search_urls = None ):
-        
-        # eventually move this to be ( name, first_url ). the name will be like 'samus_aran on gelbooru'
-        # then queue up a first url
+    def __init__( self, query = None, source_name = None, initial_search_urls = None, start_file_queue_paused = False, start_gallery_queue_paused = False ):
         
         if query is None:
             
@@ -61,8 +59,8 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
         
         self._file_limit = HC.options[ 'gallery_file_limit' ]
         
-        self._gallery_paused = False
-        self._files_paused = False
+        self._files_paused = start_file_queue_paused
+        self._gallery_paused = start_gallery_queue_paused
         
         self._file_import_options = HG.client_controller.new_options.GetDefaultFileImportOptions( 'loud' )
         
@@ -81,10 +79,11 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
         
         self._lock = threading.Lock()
         
+        self._file_status = ''
         self._gallery_status = ''
         self._gallery_status_can_change_timestamp = 0
         
-        self._current_action = ''
+        self._all_work_finished = False
         
         self._file_network_job = None
         self._gallery_network_job = None
@@ -114,7 +113,7 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
     
     def _GetSerialisableInfo( self ):
         
-        serialisable_gallery_import_key = self._gallery_import_key.encode( 'hex' )
+        serialisable_gallery_import_key = self._gallery_import_key.hex()
         
         serialisable_file_import_options = self._file_import_options.GetSerialisableTuple()
         serialisable_tag_import_options = self._tag_import_options.GetSerialisableTuple()
@@ -129,7 +128,7 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
         
         ( serialisable_gallery_import_key, self._creation_time, self._query, self._source_name, self._current_page_index, self._num_urls_found, self._num_new_urls_found, self._file_limit, self._gallery_paused, self._files_paused, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_seed_log, serialisable_file_seed_cache, self._no_work_until, self._no_work_until_reason ) = serialisable_info
         
-        self._gallery_import_key = serialisable_gallery_import_key.decode( 'hex' )
+        self._gallery_import_key = bytes.fromhex( serialisable_gallery_import_key )
         
         self._file_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_file_import_options )
         self._tag_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_import_options )
@@ -220,7 +219,7 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
                 
                 with self._lock:
                     
-                    self._current_action = text
+                    self._file_status = text
                     
                 
             
@@ -244,7 +243,7 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
             
             status = CC.STATUS_VETOED
             
-            note = HydrusData.ToUnicode( e )
+            note = str( e )
             
             file_seed.SetStatus( status, note = note )
             
@@ -282,7 +281,7 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            self._current_action = ''
+            self._file_status = ''
             
         
         if did_substantial_work:
@@ -359,7 +358,9 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
             
             with self._lock:
                 
-                self._DelayWork( 4 * 3600, HydrusData.ToUnicode( e ) )
+                delay = HG.client_controller.new_options.GetInteger( 'downloader_network_error_delay' )
+                
+                self._DelayWork( delay, str( e ) )
                 
             
             return
@@ -367,7 +368,7 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
         except Exception as e:
             
             gallery_seed_status = CC.STATUS_ERROR
-            gallery_seed_note = HydrusData.ToUnicode( e )
+            gallery_seed_note = str( e )
             
             gallery_seed.SetStatus( gallery_seed_status, note = gallery_seed_note )
             
@@ -443,7 +444,22 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            return self._current_action
+            if self._file_status != '':
+                
+                return self._file_status
+                
+            elif self._gallery_status != '':
+                
+                return self._gallery_status
+                
+            elif not self._gallery_seed_log.WorkToDo() and not self._file_seed_cache.WorkToDo():
+                
+                return 'done!'
+                
+            else:
+                
+                return ''
+                
             
         
     
@@ -506,11 +522,31 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
             
         
     
+    def GetHashes( self ):
+        
+        with self._lock:
+            
+            return self._file_seed_cache.GetHashes()
+            
+        
+    
     def GetNetworkJobs( self ):
         
         with self._lock:
             
             return ( self._file_network_job, self._gallery_network_job )
+            
+        
+    
+    def GetNewHashes( self ):
+        
+        with self._lock:
+            
+            file_import_options = ClientImportOptions.FileImportOptions()
+            
+            file_import_options.SetPresentationOptions( True, False, False )
+            
+            return self._file_seed_cache.GetPresentedHashes( file_import_options )
             
         
     
@@ -553,17 +589,17 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
             if HydrusData.TimeHasPassed( self._no_work_until ):
                 
                 gallery_status = self._gallery_status
-                current_action = self._current_action
+                file_status = self._file_status
                 
             else:
                 
                 no_work_text = HydrusData.ConvertTimestampToPrettyExpires( self._no_work_until ) + ': ' + self._no_work_until_reason
                 
                 gallery_status = no_work_text
-                current_action = no_work_text
+                file_status = no_work_text
                 
             
-            return ( gallery_status, current_action, self._files_paused, self._gallery_paused )
+            return ( gallery_status, file_status, self._files_paused, self._gallery_paused )
             
         
     
@@ -691,6 +727,9 @@ class GalleryImport( HydrusSerialisable.SerialisableBase ):
         self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles )
         self._gallery_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnGallery )
         
+        self._files_repeating_job.SetThreadSlotType( 'gallery_files' )
+        self._gallery_repeating_job.SetThreadSlotType( 'gallery_search' )
+        
     
     def REPEATINGWorkOnFiles( self ):
         
@@ -813,7 +852,7 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_MULTIPLE_GALLERY_IMPORT
     SERIALISABLE_NAME = 'Multiple Gallery Import'
-    SERIALISABLE_VERSION = 5
+    SERIALISABLE_VERSION = 7
     
     def __init__( self, gug_key_and_name = None ):
         
@@ -835,6 +874,10 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
         new_options = HG.client_controller.new_options
         
         self._file_limit = HC.options[ 'gallery_file_limit' ]
+        
+        self._start_file_queues_paused = False
+        self._start_gallery_queues_paused = False
+        self._merge_simultaneous_pends_to_one_importer = False
         
         self._file_import_options = HG.client_controller.new_options.GetDefaultFileImportOptions( 'loud' )
         self._tag_import_options = ClientImportOptions.TagImportOptions( is_default = True )
@@ -868,7 +911,7 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
         
         self._gallery_import_keys_to_gallery_imports[ gallery_import_key ] = gallery_import
         
-        if len( self._gallery_imports ) == 1: # maybe turn this off as a option for advanced users
+        if len( self._gallery_imports ) == 1:
             
             self._highlighted_gallery_import_key = gallery_import_key
             
@@ -878,7 +921,7 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
         
         ( gug_key, gug_name ) = self._gug_key_and_name
         
-        serialisable_gug_key_and_name = ( gug_key.encode( 'hex' ), gug_name )
+        serialisable_gug_key_and_name = ( gug_key.hex(), gug_name )
         
         if self._highlighted_gallery_import_key is None:
             
@@ -886,24 +929,26 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
             
         else:
             
-            serialisable_highlighted_gallery_import_key = self._highlighted_gallery_import_key.encode( 'hex' )
+            serialisable_highlighted_gallery_import_key = self._highlighted_gallery_import_key.hex()
             
+        
+        pend_options = ( self._start_file_queues_paused, self._start_gallery_queues_paused, self._merge_simultaneous_pends_to_one_importer )
         
         serialisable_file_import_options = self._file_import_options.GetSerialisableTuple()
         serialisable_tag_import_options = self._tag_import_options.GetSerialisableTuple()
         
         serialisable_gallery_imports = self._gallery_imports.GetSerialisableTuple()
         
-        return ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, self._file_limit, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports )
+        return ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, self._file_limit, pend_options, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports )
         
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
-        ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, self._file_limit, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports ) = serialisable_info
+        ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, self._file_limit, pend_options, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports ) = serialisable_info
         
         ( serialisable_gug_key, gug_name ) = serialisable_gug_key_and_name
         
-        self._gug_key_and_name = ( serialisable_gug_key.decode( 'hex' ), gug_name )
+        self._gug_key_and_name = ( bytes.fromhex( serialisable_gug_key ), gug_name )
         
         if serialisable_highlighted_gallery_import_key is None:
             
@@ -911,8 +956,10 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
             
         else:
             
-            self._highlighted_gallery_import_key = serialisable_highlighted_gallery_import_key.decode( 'hex' )
+            self._highlighted_gallery_import_key = bytes.fromhex( serialisable_highlighted_gallery_import_key )
             
+        
+        ( self._start_file_queues_paused, self._start_gallery_queues_paused, self._merge_simultaneous_pends_to_one_importer ) = pend_options
         
         self._file_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_file_import_options )
         self._tag_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_import_options )
@@ -1033,11 +1080,36 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
             
             ( gug_key, gug_name ) = ClientDownloading.ConvertGalleryIdentifierToGUGKeyAndName( gallery_identifier )
             
-            serialisable_gug_key_and_name = ( HydrusData.GenerateKey().encode( 'hex' ), gug_name )
+            serialisable_gug_key_and_name = ( HydrusData.GenerateKey().hex(), gug_name )
             
             new_serialisable_info = ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, file_limit, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports )
             
             return ( 5, new_serialisable_info )
+            
+        
+        if version == 5:
+            
+            ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, file_limit, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports ) = old_serialisable_info
+            
+            start_file_queues_paused = False
+            start_gallery_queues_paused = False
+            
+            new_serialisable_info = ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, file_limit, start_file_queues_paused, start_gallery_queues_paused, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports )
+            
+            return ( 6, new_serialisable_info )
+            
+        
+        if version == 6:
+            
+            ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, file_limit, start_file_queues_paused, start_gallery_queues_paused, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports ) = old_serialisable_info
+            
+            merge_simultaneous_pends_to_one_importer = False
+            
+            pend_options = ( start_file_queues_paused, start_gallery_queues_paused, merge_simultaneous_pends_to_one_importer )
+            
+            new_serialisable_info = ( serialisable_gug_key_and_name, serialisable_highlighted_gallery_import_key, file_limit, pend_options, serialisable_file_import_options, serialisable_tag_import_options, serialisable_gallery_imports )
+            
+            return ( 7, new_serialisable_info )
             
         
     
@@ -1120,6 +1192,14 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
             
         
     
+    def GetQueueStartSettings( self ):
+        
+        with self._lock:
+            
+            return ( self._start_file_queues_paused, self._start_gallery_queues_paused, self._merge_simultaneous_pends_to_one_importer )
+            
+        
+    
     def GetTagImportOptions( self ):
         
         with self._lock:
@@ -1163,9 +1243,9 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def PendQuery( self, query_text ):
+    def PendQueries( self, query_texts ):
         
-        created_import = None
+        created_importers = []
         
         with self._lock:
             
@@ -1175,39 +1255,67 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
                 
                 HydrusData.ShowText( 'Could not find a Gallery URL Generator for "' + self._gug_key_and_name[1] + '"!' )
                 
-                return None
+                return created_importers
                 
             
             self._gug_key_and_name = gug.GetGUGKeyAndName() # just a refresher, to keep up with any changes
             
-            initial_search_urls = gug.GenerateGalleryURLs( query_text )
+            groups_of_query_data = []
             
-            if len( initial_search_urls ) == 0:
+            for query_text in query_texts:
                 
-                HydrusData.ShowText( 'The Gallery URL Generator "' + self._gug_key_and_name[1] + '" did not produce any URLs!' )
+                initial_search_urls = gug.GenerateGalleryURLs( query_text )
                 
-                return None
+                if len( initial_search_urls ) == 0:
+                    
+                    HydrusData.ShowText( 'The Gallery URL Generator "' + self._gug_key_and_name[1] + '" did not produce any URLs!' )
+                    
+                    return created_importers
+                    
+                
+                groups_of_query_data.append( ( query_text, initial_search_urls ) )
                 
             
-            gallery_import = GalleryImport( query = query_text, source_name = self._gug_key_and_name[1], initial_search_urls = initial_search_urls )
+            if self._merge_simultaneous_pends_to_one_importer and len( groups_of_query_data ) > 1:
+                
+                # flatten these groups down to one
+                
+                all_search_urls_flat = []
+                
+                for ( query_text, initial_search_urls ) in groups_of_query_data:
+                    
+                    all_search_urls_flat.extend( initial_search_urls )
+                    
+                
+                query_text = HydrusData.ToHumanInt( len( groups_of_query_data ) ) + ' queries'
+                
+                groups_of_query_data = [ ( query_text, all_search_urls_flat ) ]
+                
             
-            gallery_import.SetFileLimit( self._file_limit )
-            
-            gallery_import.SetFileImportOptions( self._file_import_options )
-            gallery_import.SetTagImportOptions( self._tag_import_options )
-            
-            publish_to_page = False
-            
-            gallery_import.Start( self._page_key, publish_to_page )
-            
-            self._AddGalleryImport( gallery_import )
+            for ( query_text, initial_search_urls ) in groups_of_query_data:
+                
+                gallery_import = GalleryImport( query = query_text, source_name = self._gug_key_and_name[1], initial_search_urls = initial_search_urls, start_file_queue_paused = self._start_file_queues_paused, start_gallery_queue_paused = self._start_gallery_queues_paused )
+                
+                gallery_import.SetFileLimit( self._file_limit )
+                
+                gallery_import.SetFileImportOptions( self._file_import_options )
+                gallery_import.SetTagImportOptions( self._tag_import_options )
+                
+                publish_to_page = False
+                
+                gallery_import.Start( self._page_key, publish_to_page )
+                
+                self._AddGalleryImport( gallery_import )
+                
+                created_importers.append( gallery_import )
+                
             
             ClientImporting.WakeRepeatingJob( self._importers_repeating_job )
             
             self._SetDirty()
             
         
-        return gallery_import
+        return created_importers
         
     
     def RemoveGalleryImport( self, gallery_import_key ):
@@ -1258,6 +1366,16 @@ class MultipleGalleryImport( HydrusSerialisable.SerialisableBase ):
                 
                 highlighted_gallery_import.PublishToPage( True )
                 
+            
+        
+    
+    def SetQueueStartSettings( self, start_file_queues_paused, start_gallery_queues_paused, merge_simultaneous_pends_to_one_importer ):
+        
+        with self._lock:
+            
+            self._start_file_queues_paused = start_file_queues_paused
+            self._start_gallery_queues_paused = start_gallery_queues_paused
+            self._merge_simultaneous_pends_to_one_importer = merge_simultaneous_pends_to_one_importer
             
         
     

@@ -1,18 +1,20 @@
-import ClientConstants as CC
-import ClientDownloading
-import ClientImporting
-import ClientNetworkingContexts
-import ClientNetworkingJobs
-import ClientRatings
-import ClientThreading
+from . import ClientConstants as CC
+from . import ClientDownloading
+from . import ClientImporting
+from . import ClientNetworkingContexts
+from . import ClientNetworkingJobs
+from . import ClientRatings
+from . import ClientThreading
 import hashlib
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusNetwork
-import HydrusNetworking
-import HydrusSerialisable
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusNATPunch
+from . import HydrusNetwork
+from . import HydrusNetworking
+from . import HydrusPaths
+from . import HydrusSerialisable
 import json
 import os
 import threading
@@ -39,7 +41,6 @@ def GenerateDefaultServiceDictionary( service_type ):
                 
                 dictionary[ 'metadata' ] = HydrusNetwork.Metadata()
                 dictionary[ 'paused' ] = False
-                dictionary[ 'tag_archive_sync' ] = []
                 
             
         
@@ -47,20 +48,35 @@ def GenerateDefaultServiceDictionary( service_type ):
             
             dictionary[ 'credentials' ] = HydrusNetwork.Credentials( '127.0.0.1', 5001 )
             dictionary[ 'multihash_prefix' ] = ''
+            dictionary[ 'use_nocopy' ] = False
+            dictionary[ 'nocopy_abs_path_translations' ] = {}
             
         
     
-    if service_type == HC.LOCAL_TAG:
-        
-        dictionary[ 'tag_archive_sync' ] = []
-        
-    
-    if service_type == HC.LOCAL_BOORU:
+    if service_type in ( HC.LOCAL_BOORU, HC.CLIENT_API_SERVICE ):
         
         dictionary[ 'port' ] = None
         dictionary[ 'upnp_port' ] = None
         dictionary[ 'bandwidth_tracker' ] = HydrusNetworking.BandwidthTracker()
         dictionary[ 'bandwidth_rules' ] = HydrusNetworking.BandwidthRules()
+        
+        dictionary[ 'support_cors' ] = False
+        dictionary[ 'log_requests' ] = False
+        
+        dictionary[ 'external_scheme_override' ] = None
+        dictionary[ 'external_host_override' ] = None
+        dictionary[ 'external_port_override' ] = None
+        
+        if service_type == HC.LOCAL_BOORU:
+            
+            allow_non_local_connections = True
+            
+        elif service_type == HC.CLIENT_API_SERVICE:
+            
+            allow_non_local_connections = False
+            
+        
+        dictionary[ 'allow_non_local_connections' ] = allow_non_local_connections
         
     
     if service_type in HC.RATINGS_SERVICES:
@@ -70,11 +86,11 @@ def GenerateDefaultServiceDictionary( service_type ):
         
         if service_type == HC.LOCAL_RATING_LIKE:
             
-            dictionary[ 'colours' ] = ClientRatings.default_like_colours.items()
+            dictionary[ 'colours' ] = list( ClientRatings.default_like_colours.items() )
             
         elif service_type == HC.LOCAL_RATING_NUMERICAL:
             
-            dictionary[ 'colours' ] = ClientRatings.default_numerical_colours.items()
+            dictionary[ 'colours' ] = list( ClientRatings.default_numerical_colours.items() )
             dictionary[ 'num_stars' ] = 5
             dictionary[ 'allow_zero' ]= True
             
@@ -121,6 +137,10 @@ def GenerateService( service_key, service_type, name, dictionary = None ):
         
         cl = ServiceLocalBooru
         
+    elif service_type == HC.CLIENT_API_SERVICE:
+        
+        cl = ServiceClientAPI
+        
     else:
         
         cl = Service
@@ -161,7 +181,15 @@ class Service( object ):
     
     def _LoadFromDictionary( self, dictionary ):
         
-        pass
+        default_dictionary = GenerateDefaultServiceDictionary( self._service_type )
+        
+        for ( key, value ) in default_dictionary.items():
+            
+            if key not in dictionary:
+                
+                dictionary[ key ] = value
+                
+            
         
     
     def _SetDirty( self ):
@@ -237,14 +265,17 @@ class Service( object ):
                 
             except Exception as e:
                 
-                return HydrusData.ToUnicode( e )
+                return str( e )
                 
             
         
     
     def IsDirty( self ):
         
-        return self._dirty
+        with self._lock:
+            
+            return self._dirty
+            
         
     
     def IsFunctional( self ):
@@ -287,7 +318,7 @@ class Service( object ):
         return ( self._service_key, self._service_type, self._name, dictionary )
         
     
-class ServiceLocalBooru( Service ):
+class ServiceLocalServerService( Service ):
     
     def _CheckFunctional( self ):
         
@@ -305,8 +336,14 @@ class ServiceLocalBooru( Service ):
         
         dictionary[ 'port' ] = self._port
         dictionary[ 'upnp_port' ] = self._upnp_port
+        dictionary[ 'allow_non_local_connections' ] = self._allow_non_local_connections
+        dictionary[ 'support_cors' ] = self._support_cors
+        dictionary[ 'log_requests' ] = self._log_requests
         dictionary[ 'bandwidth_tracker' ] = self._bandwidth_tracker
         dictionary[ 'bandwidth_rules' ] = self._bandwidth_rules
+        dictionary[ 'external_scheme_override' ] = self._external_scheme_override
+        dictionary[ 'external_host_override' ] = self._external_host_override
+        dictionary[ 'external_port_override' ] = self._external_port_override
         
         return dictionary
         
@@ -317,10 +354,24 @@ class ServiceLocalBooru( Service ):
         
         self._port = dictionary[ 'port' ]
         self._upnp_port = dictionary[ 'upnp_port' ]
+        self._allow_non_local_connections = dictionary[ 'allow_non_local_connections' ]
+        self._support_cors = dictionary[ 'support_cors' ]
+        self._log_requests = dictionary[ 'log_requests' ]
         self._bandwidth_tracker = dictionary[ 'bandwidth_tracker' ]
         self._bandwidth_rules = dictionary[ 'bandwidth_rules' ]
+        self._external_scheme_override = dictionary[ 'external_scheme_override' ]
+        self._external_host_override = dictionary[ 'external_host_override' ]
+        self._external_port_override = dictionary[ 'external_port_override' ]
         
         # this should support the same serverservice interface so we can just toss it at the regular serverengine and all the bandwidth will work ok
+        
+    
+    def AllowsNonLocalConnections( self ):
+        
+        with self._lock:
+            
+            return self._allow_non_local_connections
+            
         
     
     def BandwidthOK( self ):
@@ -347,6 +398,14 @@ class ServiceLocalBooru( Service ):
             
         
     
+    def LogsRequests( self ):
+        
+        with self._lock:
+            
+            return self._log_requests
+            
+        
+    
     def ReportDataUsed( self, num_bytes ):
         
         with self._lock:
@@ -363,31 +422,69 @@ class ServiceLocalBooru( Service ):
             
         
     
-class ServiceLocalTag( Service ):
-    
-    def _GetSerialisableDictionary( self ):
-        
-        dictionary = Service._GetSerialisableDictionary( self )
-        
-        dictionary[ 'tag_archive_sync' ] = self._tag_archive_sync.items()
-        
-        return dictionary
-        
-    
-    def _LoadFromDictionary( self, dictionary ):
-        
-        Service._LoadFromDictionary( self, dictionary )
-        
-        self._tag_archive_sync = dict( dictionary[ 'tag_archive_sync' ] )
-        
-    
-    def GetTagArchiveSync( self ):
+    def SupportsCORS( self ):
         
         with self._lock:
             
-            return self._tag_archive_sync
+            return self._support_cors
             
         
+    
+class ServiceLocalBooru( ServiceLocalServerService ):
+    
+    def GetExternalShareURL( self, share_key ):
+        
+        if self._external_scheme_override is None:
+            
+            scheme = 'http'
+            
+        else:
+            
+            scheme = self._external_scheme_override
+            
+        
+        if self._external_host_override is None:
+            
+            host = HydrusNATPunch.GetExternalIP()
+            
+        else:
+            
+            host = self._external_host_override
+            
+        
+        if self._external_port_override is None:
+            
+            if self._upnp_port is None:
+                
+                port = ':' + self._port
+                
+            else:
+                
+                port = ':' + self._upnp_port
+                
+            
+        else:
+            
+            port = self._external_port_override
+            
+            if port != '':
+                
+                port = ':' + port
+                
+            
+        
+        url = '{}://{}{}/gallery?share_key={}'.format( scheme, host, port, share_key.hex() )
+        
+        return url
+        
+    
+class ServiceClientAPI( ServiceLocalServerService ):
+    
+    pass
+    
+class ServiceLocalTag( Service ):
+    
+    pass
     
 class ServiceLocalRating( Service ):
     
@@ -396,7 +493,7 @@ class ServiceLocalRating( Service ):
         dictionary = Service._GetSerialisableDictionary( self )
         
         dictionary[ 'shape' ] = self._shape
-        dictionary[ 'colours' ] = self._colours.items()
+        dictionary[ 'colours' ] = list(self._colours.items())
         
         return dictionary
         
@@ -506,30 +603,33 @@ class ServiceRemote( Service ):
         return 3600 * 4
         
     
-    def _CheckFunctional( self, including_external_communication = True ):
+    def _CheckFunctional( self, including_external_communication = True, including_bandwidth = True ):
         
         if including_external_communication:
             
-            self._CheckCanCommunicateExternally()
+            self._CheckCanCommunicateExternally( including_bandwidth = including_bandwidth )
             
         
         Service._CheckFunctional( self )
         
     
-    def _CheckCanCommunicateExternally( self ):
+    def _CheckCanCommunicateExternally( self, including_bandwidth = True ):
         
         if not HydrusData.TimeHasPassed( self._no_requests_until ):
             
-            raise HydrusExceptions.PermissionException( self._no_requests_reason + ' - next request ' + HydrusData.TimestampToPrettyTimeDelta( self._no_requests_until ) )
+            raise HydrusExceptions.InsufficientCredentialsException( self._no_requests_reason + ' - next request ' + HydrusData.TimestampToPrettyTimeDelta( self._no_requests_until ) )
             
         
-        example_nj = ClientNetworkingJobs.NetworkJobHydrus( self._service_key, 'GET', self._GetBaseURL() )
-        
-        can_start = HG.client_controller.network_engine.bandwidth_manager.CanDoWork( example_nj.GetNetworkContexts(), threshold = 60 )
-        
-        if not can_start:
+        if including_bandwidth:
             
-            raise HydrusExceptions.BandwidthException( 'bandwidth exceeded' )
+            example_nj = ClientNetworkingJobs.NetworkJobHydrus( self._service_key, 'GET', self._GetBaseURL() )
+            
+            can_start = HG.client_controller.network_engine.bandwidth_manager.CanDoWork( example_nj.GetNetworkContexts(), threshold = 60 )
+            
+            if not can_start:
+                
+                raise HydrusExceptions.BandwidthException( 'bandwidth exceeded' )
+                
             
         
     
@@ -643,24 +743,24 @@ class ServiceRestricted( ServiceRemote ):
             
         
     
-    def _CheckFunctional( self, including_external_communication = True, including_account = True ):
+    def _CheckFunctional( self, including_external_communication = True, including_bandwidth = True, including_account = True ):
         
         if including_account:
             
             self._account.CheckFunctional()
             
         
-        ServiceRemote._CheckFunctional( self, including_external_communication = including_external_communication )
+        ServiceRemote._CheckFunctional( self, including_external_communication = including_external_communication, including_bandwidth = including_bandwidth )
         
     
-    def _CheckCanCommunicateExternally( self ):
+    def _CheckCanCommunicateExternally( self, including_bandwidth = True ):
         
         if not self._credentials.HasAccessKey():
             
-            raise HydrusExceptions.PermissionException( 'this service has no access key set' )
+            raise HydrusExceptions.MissingCredentialsException( 'this service has no access key set' )
             
         
-        ServiceRemote._CheckCanCommunicateExternally( self )
+        ServiceRemote._CheckCanCommunicateExternally( self, including_bandwidth = including_bandwidth )
         
         
     
@@ -682,11 +782,11 @@ class ServiceRestricted( ServiceRemote ):
         self._next_account_sync = dictionary[ 'next_account_sync' ]
         
     
-    def CheckFunctional( self, including_external_communication = True, including_account = True ):
+    def CheckFunctional( self, including_external_communication = True, including_bandwidth = True, including_account = True ):
         
         with self._lock:
             
-            self._CheckFunctional( including_external_communication = including_external_communication, including_account = including_account )
+            self._CheckFunctional( including_external_communication = including_external_communication, including_bandwidth = including_bandwidth, including_account = including_account )
             
         
     
@@ -727,16 +827,19 @@ class ServiceRestricted( ServiceRemote ):
             return True
             
         
-        return self._account.IsDirty()
+        with self._lock:
+            
+            return self._account.IsDirty()
+            
         
     
-    def IsFunctional( self, including_external_communication = True, including_account = True ):
+    def IsFunctional( self, including_external_communication = True, including_bandwidth = True, including_account = True ):
         
         with self._lock:
             
             try:
                 
-                self._CheckFunctional( including_external_communication = including_external_communication, including_account = including_account )
+                self._CheckFunctional( including_external_communication = including_external_communication, including_bandwidth = including_bandwidth, including_account = including_account )
                 
                 return True
                 
@@ -780,7 +883,7 @@ class ServiceRestricted( ServiceRemote ):
                     
                     content_type = HC.APPLICATION_JSON
                     
-                    body = HydrusNetwork.DumpToBodyString( request_args )
+                    body = HydrusNetwork.DumpHydrusArgsToNetworkBytes( request_args )
                     
                 
             
@@ -806,6 +909,12 @@ class ServiceRestricted( ServiceRemote ):
             
             network_job = ClientNetworkingJobs.NetworkJobHydrus( self._service_key, method, url, body = body, temp_path = temp_path )
             
+            if command in ( '', 'account', 'access_key_verification' ):
+                
+                network_job.OverrideBandwidth()
+                network_job.OnlyTryConnectionOnce()
+                
+            
             if command in ( '', 'access_key', 'access_key_verification' ):
                 
                 # don't try to establish a session key for these requests
@@ -813,7 +922,7 @@ class ServiceRestricted( ServiceRemote ):
                 
                 if command == 'access_key_verification':
                     
-                    network_job.AddAdditionalHeader( 'Hydrus-Key', self._credentials.GetAccessKey().encode( 'hex' ) )
+                    network_job.AddAdditionalHeader( 'Hydrus-Key', self._credentials.GetAccessKey().hex() )
                     
                 
             
@@ -822,34 +931,34 @@ class ServiceRestricted( ServiceRemote ):
                 network_job.AddAdditionalHeader( 'Content-Type', HC.mime_string_lookup[ content_type ] )
                 
             
-            network_job.SetDeathTime( HydrusData.GetNow() + 30 ) # we don't want to wait on logins during shutdown and so on
-            
             HG.client_controller.network_engine.AddJob( network_job )
             
             network_job.WaitUntilDone()
             
-            content = network_job.GetContent()
+            network_bytes = network_job.GetContentBytes()
             
             content_type = network_job.GetContentType()
             
             if content_type == 'application/json':
                 
-                response = HydrusNetwork.ParseBodyString( content )
+                parsed_args = HydrusNetwork.ParseNetworkBytesToParsedHydrusArgs( network_bytes )
                 
-                if command == 'account' and 'account' in response:
+                if command == 'account' and 'account' in parsed_args:
                     
                     data_used = network_job.GetTotalDataUsed()
                     
-                    account = response[ 'account' ]
+                    account = parsed_args[ 'account' ]
                     
                     # because the account was one behind when it was serialised! mostly do this just to sync up nicely with the service bandwidth tracker
                     account.ReportDataUsed( data_used )
                     account.ReportRequestUsed()
                     
                 
+                response = parsed_args
+                
             else:
                 
-                response = content
+                response = network_bytes
                 
             
             return response
@@ -866,11 +975,7 @@ class ServiceRestricted( ServiceRemote ):
                     
                     HG.client_controller.network_engine.session_manager.ClearSession( self.network_context )
                     
-                elif isinstance( e, HydrusExceptions.PermissionException ):
-                    
-                    self._DealWithAccountError()
-                    
-                elif isinstance( e, HydrusExceptions.ForbiddenException ):
+                elif isinstance( e, ( HydrusExceptions.MissingCredentialsException, HydrusExceptions.InsufficientCredentialsException ) ):
                     
                     self._DealWithAccountError()
                     
@@ -888,9 +993,8 @@ class ServiceRestricted( ServiceRemote ):
                     
                 else:
                     
-                    self._DelayFutureRequests( HydrusData.ToUnicode( e ) )
+                    self._DelayFutureRequests( str( e ) )
                     
-                
                 
             
             raise
@@ -914,10 +1018,9 @@ class ServiceRestricted( ServiceRemote ):
                 
                 do_it = True
                 
-                if force:
-                    
-                    self._no_requests_until = 0
-                    
+                self._no_requests_until = 0
+                
+                self._account = HydrusNetwork.Account.GenerateUnknownAccount()
                 
             else:
                 
@@ -959,7 +1062,7 @@ class ServiceRestricted( ServiceRemote ):
                 
                 HG.client_controller.pub( 'notify_new_permissions' )
                 
-            except HydrusExceptions.NetworkException as e:
+            except ( HydrusExceptions.CancelledException, HydrusExceptions.NetworkException ) as e:
                 
                 HydrusData.Print( 'Failed to refresh account for ' + name + ':' )
                 
@@ -969,6 +1072,10 @@ class ServiceRestricted( ServiceRemote ):
                     
                     raise
                     
+                
+            except HydrusExceptions.ShutdownException:
+                
+                return
                 
             except Exception:
                 
@@ -1022,7 +1129,7 @@ class ServiceRepository( ServiceRestricted ):
         
         try:
             
-            self._CheckFunctional( including_external_communication = False, including_account = False )
+            self._CheckFunctional( including_external_communication = False, including_bandwidth = False, including_account = False )
             
             return True
             
@@ -1032,19 +1139,19 @@ class ServiceRepository( ServiceRestricted ):
             
         
     
-    def _CheckFunctional( self, including_external_communication = True, including_account = True ):
+    def _CheckFunctional( self, including_external_communication = True, including_bandwidth = True, including_account = True ):
         
         if self._paused:
             
-            raise HydrusExceptions.PermissionException( 'Repository is paused!' )
+            raise HydrusExceptions.InsufficientCredentialsException( 'Repository is paused!' )
             
         
         if HG.client_controller.options[ 'pause_repo_sync' ]:
             
-            raise HydrusExceptions.PermissionException( 'All repositories are paused!' )
+            raise HydrusExceptions.InsufficientCredentialsException( 'All repositories are paused!' )
             
         
-        ServiceRestricted._CheckFunctional( self, including_external_communication = including_external_communication, including_account = including_account )
+        ServiceRestricted._CheckFunctional( self, including_external_communication = including_external_communication, including_bandwidth = including_bandwidth, including_account = including_account )
         
     
     def _GetSerialisableDictionary( self ):
@@ -1053,7 +1160,6 @@ class ServiceRepository( ServiceRestricted ):
         
         dictionary[ 'metadata' ] = self._metadata
         dictionary[ 'paused' ] = self._paused
-        dictionary[ 'tag_archive_sync' ] = self._tag_archive_sync.items()
         
         return dictionary
         
@@ -1064,7 +1170,66 @@ class ServiceRepository( ServiceRestricted ):
         
         self._metadata = dictionary[ 'metadata' ]
         self._paused = dictionary[ 'paused' ]
-        self._tag_archive_sync = dict( dictionary[ 'tag_archive_sync' ] )
+        
+    
+    def _SyncProcessUpdates( self, maintenance_mode = HC.MAINTENANCE_IDLE, stop_time = None ):
+        
+        with self._lock:
+            
+            if not self._CanSyncProcess():
+                
+                return
+                
+            
+        
+        if HG.client_controller.ShouldStopThisWork( maintenance_mode, stop_time = stop_time ):
+            
+            return
+            
+        
+        try:
+            
+            ( did_some_work, did_everything ) = HG.client_controller.WriteSynchronous( 'process_repository', self._service_key, maintenance_mode = maintenance_mode, stop_time = stop_time )
+            
+            if did_some_work:
+                
+                with self._lock:
+                    
+                    self._SetDirty()
+                    
+                    if self._service_type == HC.TAG_REPOSITORY:
+                        
+                        HG.client_controller.pub( 'notify_new_force_refresh_tags_data' )
+                        
+                    
+                
+            
+            if not did_everything:
+                
+                time.sleep( 3 ) # stop spamming of repo sync daemon from bringing this up again too quick
+                
+            
+        except HydrusExceptions.ShutdownException:
+            
+            return
+            
+        except Exception as e:
+            
+            with self._lock:
+                
+                message = 'Failed to process updates for the ' + self._name + ' repository! The error follows:'
+                
+                HydrusData.ShowText( message )
+                
+                HydrusData.ShowException( e )
+                
+                self._paused = True
+                
+                self._SetDirty()
+                
+            
+            HG.client_controller.pub( 'important_dirt_to_clean' )
+            
         
     
     def CanDoIdleShutdownWork( self ):
@@ -1089,14 +1254,6 @@ class ServiceRepository( ServiceRestricted ):
         with self._lock:
             
             return self._metadata.GetNextUpdateDueString( from_client = True )
-            
-        
-    
-    def GetTagArchiveSync( self ):
-        
-        with self._lock:
-            
-            return self._tag_archive_sync
             
         
     
@@ -1161,7 +1318,7 @@ class ServiceRepository( ServiceRestricted ):
             
         
     
-    def Sync( self, only_process_when_idle = False, stop_time = None ):
+    def Sync( self, maintenance_mode = HC.MAINTENANCE_IDLE, stop_time = None ):
         
         with self._sync_lock: # to stop sync_now button clicks from stomping over the regular daemon and vice versa
             
@@ -1171,13 +1328,13 @@ class ServiceRepository( ServiceRestricted ):
                 
                 self.SyncDownloadUpdates( stop_time )
                 
-                self.SyncProcessUpdates( only_process_when_idle, stop_time )
+                self._SyncProcessUpdates( maintenance_mode = maintenance_mode, stop_time = stop_time )
                 
                 self.SyncThumbnails( stop_time )
                 
             except Exception as e:
                 
-                self._DelayFutureRequests( HydrusData.ToUnicode( e ) )
+                self._DelayFutureRequests( str( e ) )
                 
                 HydrusData.ShowText( 'The service "' + self._name + '" encountered an error while trying to sync! It will not do any work for a little while. Please elevate this to hydrus dev if a fix is not obvious.' )
                 
@@ -1252,7 +1409,7 @@ class ServiceRepository( ServiceRestricted ):
                         
                     except HydrusExceptions.CancelledException as e:
                         
-                        self._DelayFutureRequests( HydrusData.ToUnicode( e ) )
+                        self._DelayFutureRequests( str( e ) )
                         
                         return
                         
@@ -1282,7 +1439,7 @@ class ServiceRepository( ServiceRestricted ):
                     
                     try:
                         
-                        update = HydrusSerialisable.CreateFromNetworkString( update_network_string )
+                        update = HydrusSerialisable.CreateFromNetworkBytes( update_network_string )
                         
                     except Exception as e:
                         
@@ -1293,7 +1450,7 @@ class ServiceRepository( ServiceRestricted ):
                             self._DealWithFundamentalNetworkError()
                             
                         
-                        message = 'Update ' + update_hash.encode( 'hex' ) + ' downloaded from the ' + self._name + ' repository failed to load! This is a serious error!'
+                        message = 'Update ' + update_hash.hex() + ' downloaded from the ' + self._name + ' repository failed to load! This is a serious error!'
                         message += os.linesep * 2
                         message += 'The repository has been paused for now. Please look into what could be wrong and report this to the hydrus dev.'
                         
@@ -1321,7 +1478,7 @@ class ServiceRepository( ServiceRestricted ):
                             self._DealWithFundamentalNetworkError()
                             
                         
-                        message = 'Update ' + update_hash.encode( 'hex' ) + ' downloaded from the ' + self._name + ' was not a valid update--it was a ' + repr( update ) + '! This is a serious error!'
+                        message = 'Update ' + update_hash.hex() + ' downloaded from the ' + self._name + ' was not a valid update--it was a ' + repr( update ) + '! This is a serious error!'
                         message += os.linesep * 2
                         message += 'The repository has been paused for now. Please look into what could be wrong and report this to the hydrus dev.'
                         
@@ -1392,7 +1549,7 @@ class ServiceRepository( ServiceRestricted ):
                 
             except HydrusExceptions.CancelledException as e:
                 
-                self._DelayFutureRequests( HydrusData.ToUnicode( e ) )
+                self._DelayFutureRequests( str( e ) )
                 
                 return
                 
@@ -1416,54 +1573,11 @@ class ServiceRepository( ServiceRestricted ):
             
         
     
-    def SyncProcessUpdates( self, only_when_idle = False, stop_time = None ):
+    def SyncProcessUpdates( self, maintenance_mode = HC.MAINTENANCE_IDLE, stop_time = None ):
         
-        with self._lock:
+        with self._sync_lock:
             
-            if not self._CanSyncProcess():
-                
-                return
-                
-            
-        
-        if only_when_idle and not HG.client_controller.CurrentlyIdle():
-            
-            return
-            
-        
-        try:
-            
-            ( did_some_work, did_everything ) = HG.client_controller.WriteSynchronous( 'process_repository', self._service_key, only_when_idle, stop_time )
-            
-            if did_some_work:
-                
-                with self._lock:
-                    
-                    self._SetDirty()
-                    
-                
-            
-            if not did_everything:
-                
-                time.sleep( 3 ) # stop spamming of repo sync daemon from bringing this up again too quick
-                
-            
-        except Exception as e:
-            
-            with self._lock:
-                
-                message = 'Failed to process updates for the ' + self._name + ' repository! The error follows:'
-                
-                HydrusData.ShowText( message )
-                
-                HydrusData.ShowException( e )
-                
-                self._paused = True
-                
-                self._SetDirty()
-                
-            
-            HG.client_controller.pub( 'important_dirt_to_clean' )
+            self._SyncProcessUpdates( maintenance_mode = maintenance_mode, stop_time = stop_time )
             
         
     
@@ -1526,11 +1640,11 @@ class ServiceRepository( ServiceRestricted ):
                     
                     try:
                         
-                        thumbnail = self.Request( HC.GET, 'thumbnail', { 'hash' : thumbnail_hash } )
+                        thumbnail_bytes = self.Request( HC.GET, 'thumbnail', { 'hash' : thumbnail_hash } )
                         
                     except HydrusExceptions.CancelledException as e:
                         
-                        self._DelayFutureRequests( HydrusData.ToUnicode( e ) )
+                        self._DelayFutureRequests( str( e ) )
                         
                         return
                         
@@ -1543,7 +1657,7 @@ class ServiceRepository( ServiceRestricted ):
                         return
                         
                     
-                    client_files_manager.AddFullSizeThumbnail( thumbnail_hash, thumbnail )
+                    client_files_manager.AddThumbnailFromBytes( thumbnail_hash, thumbnail_bytes )
                     
                 
                 job_key.SetVariable( 'popup_text_1', 'finished' )
@@ -1564,6 +1678,8 @@ class ServiceIPFS( ServiceRemote ):
         dictionary = ServiceRemote._GetSerialisableDictionary( self )
         
         dictionary[ 'multihash_prefix' ] = self._multihash_prefix
+        dictionary[ 'use_nocopy' ] = self._use_nocopy
+        dictionary[ 'nocopy_abs_path_translations' ] = self._nocopy_abs_path_translations
         
         return dictionary
         
@@ -1573,6 +1689,8 @@ class ServiceIPFS( ServiceRemote ):
         ServiceRemote._LoadFromDictionary( self, dictionary )
         
         self._multihash_prefix = dictionary[ 'multihash_prefix' ]
+        self._use_nocopy = dictionary[ 'use_nocopy' ]
+        self._nocopy_abs_path_translations = dictionary[ 'nocopy_abs_path_translations' ]
         
     
     def _ConvertMultihashToURLTree( self, name, size, multihash ):
@@ -1589,9 +1707,9 @@ class ServiceIPFS( ServiceRemote ):
         
         network_job.WaitUntilDone()
         
-        data = network_job.GetContent()
+        parsing_text = network_job.GetContentText()
         
-        links_json = json.loads( data )
+        links_json = json.loads( parsing_text )
         
         is_directory = False
         
@@ -1643,6 +1761,33 @@ class ServiceIPFS( ServiceRemote ):
         return api_base_url
         
     
+    def EnableNoCopy( self, value ):
+        
+        with self._lock:
+            
+            api_base_url = self._GetAPIBaseURL()
+            
+        
+        arg_value = json.dumps( value ) # lower case true/false
+        
+        url = api_base_url + 'config?arg=Experimental.FilestoreEnabled&arg={}&bool=true'.format( arg_value )
+        
+        network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
+        
+        network_job.OnlyTryConnectionOnce()
+        network_job.OverrideBandwidth()
+        
+        HG.client_controller.network_engine.AddJob( network_job )
+        
+        network_job.WaitUntilDone()
+        
+        parsing_text = network_job.GetContentText()
+        
+        j = json.loads( parsing_text )
+        
+        return j[ 'Value' ] == value
+        
+    
     def GetDaemonVersion( self ):
         
         with self._lock:
@@ -1654,15 +1799,16 @@ class ServiceIPFS( ServiceRemote ):
         
         network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
         
+        network_job.OnlyTryConnectionOnce()
         network_job.OverrideBandwidth()
         
         HG.client_controller.network_engine.AddJob( network_job )
         
         network_job.WaitUntilDone()
         
-        data = network_job.GetContent()
+        parsing_text = network_job.GetContentText()
         
-        j = json.loads( data )
+        j = json.loads( parsing_text )
         
         return j[ 'Version' ]
         
@@ -1675,11 +1821,50 @@ class ServiceIPFS( ServiceRemote ):
             
         
     
+    def GetNoCopyEnabled( self ):
+        
+        with self._lock:
+            
+            api_base_url = self._GetAPIBaseURL()
+            
+        
+        url = api_base_url + 'config?arg=Experimental.FilestoreEnabled'
+        
+        network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
+        
+        network_job.OnlyTryConnectionOnce()
+        network_job.OverrideBandwidth()
+        
+        HG.client_controller.network_engine.AddJob( network_job )
+        
+        try:
+            
+            network_job.WaitUntilDone()
+            
+        except HydrusExceptions.ServerException:
+            
+            # returns 500 and error if not yet set, wew
+            
+            parsing_text = network_job.GetContentText()
+            
+            if 'Experimental key has no attributes' in parsing_text:
+                
+                return False
+                
+            
+        
+        parsing_text = network_job.GetContentText()
+        
+        j = json.loads( parsing_text )
+        
+        return j[ 'Value' ]
+        
+    
     def ImportFile( self, multihash ):
         
         def on_wx_select_tree( job_key, url_tree ):
             
-            import ClientGUIDialogs
+            from . import ClientGUIDialogs
             
             with ClientGUIDialogs.DialogSelectFromURLTree( HG.client_controller.gui, url_tree ) as dlg:
                 
@@ -1723,6 +1908,34 @@ class ServiceIPFS( ServiceRemote ):
             
         
         HG.client_controller.CallToThread( off_wx )
+        
+    
+    def IsPinned( self, multihash ):
+        
+        with self._lock:
+            
+            api_base_url = self._GetAPIBaseURL()
+            
+        
+        # check if it is pinned. if we try to unpin something not pinned, the daemon 500s
+        
+        url = api_base_url + '/pin/ls?arg={}'.format( multihash )
+        
+        network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
+        
+        network_job.OverrideBandwidth()
+        
+        HG.client_controller.network_engine.AddJob( network_job )
+        
+        network_job.WaitUntilDone()
+        
+        parsing_text = network_job.GetContentText()
+        
+        j = json.loads( parsing_text )
+        
+        file_is_pinned = 'Keys' in j and multihash in j['Keys']
+        
+        return file_is_pinned
         
     
     def PinDirectory( self, hashes, note ):
@@ -1786,9 +1999,9 @@ class ServiceIPFS( ServiceRemote ):
             
             network_job.WaitUntilDone()
             
-            data = network_job.GetContent()
+            parsing_text = network_job.GetContentText()
             
-            response_json = json.loads( data )
+            response_json = json.loads( parsing_text )
             
             for ( i, ( hash, mime, multihash ) ) in enumerate( file_info ):
                 
@@ -1804,7 +2017,7 @@ class ServiceIPFS( ServiceRemote ):
                 
                 object_multihash = response_json[ 'Hash' ]
                 
-                filename = hash.encode( 'hex' ) + HC.mime_ext_lookup[ mime ]
+                filename = hash.hex() + HC.mime_ext_lookup[ mime ]
                 
                 url = api_base_url + 'object/patch/add-link?arg=' + object_multihash + '&arg=' + filename + '&arg=' + multihash
                 
@@ -1816,9 +2029,9 @@ class ServiceIPFS( ServiceRemote ):
                 
                 network_job.WaitUntilDone()
                 
-                data = network_job.GetContent()
+                parsing_text = network_job.GetContentText()
                 
-                response_json = json.loads( data )
+                response_json = json.loads( parsing_text )
                 
             
             directory_multihash = response_json[ 'Hash' ]
@@ -1866,34 +2079,72 @@ class ServiceIPFS( ServiceRemote ):
     
     def PinFile( self, hash, mime ):
         
-        mime_string = HC.mime_string_lookup[ mime ]
-        
         with self._lock:
             
             api_base_url = self._GetAPIBaseURL()
             
         
-        url = api_base_url + 'add'
-        
         client_files_manager = HG.client_controller.client_files_manager
         
         path = client_files_manager.GetFilePath( hash, mime )
         
-        files = { 'path' : ( hash.encode( 'hex' ), open( path, 'rb' ), mime_string ) }
+        with open( path, 'rb' ) as f:
+            
+            if self._use_nocopy:
+                
+                url = api_base_url + 'add?nocopy=true'
+                
+                mime_string = 'application/octet-stream'
+                
+                ipfs_abspath = None
+                
+                for ( hydrus_portable_path, ipfs_translation ) in self._nocopy_abs_path_translations.items():
+                    
+                    hydrus_path = HydrusPaths.ConvertPortablePathToAbsPath( hydrus_portable_path )
+                    
+                    if path.startswith( hydrus_path ):
+                        
+                        if ipfs_translation == '':
+                            
+                            raise Exception( 'The path {} does not have an IPFS translation set! Please check your IPFS path mappings under manage services!'.format( hydrus_path ) )
+                            
+                        
+                        ipfs_abspath = path.replace( hydrus_path, ipfs_translation )
+                        
+                        break
+                        
+                    
+                
+                if ipfs_abspath is None:
+                    
+                    raise Exception( 'Could not figure out an ipfs absolute path for {}! Have new paths been added due to a database migration? Please check your IPFS path mappings under manage services!'.format( path ) )
+                    
+                
+                files = { 'path' : ( hash.hex(), f, mime_string, { 'Abspath' : ipfs_abspath } ) }
+                
+            else:
+                
+                url = api_base_url + 'add'
+                
+                mime_string = HC.mime_string_lookup[ mime ]
+                
+                files = { 'path' : ( hash.hex(), f, mime_string ) }
+                
+            
+            network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
+            
+            network_job.SetFiles( files )
+            
+            network_job.OverrideBandwidth()
+            
+            HG.client_controller.network_engine.AddJob( network_job )
+            
+            network_job.WaitUntilDone()
+            
         
-        network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
+        parsing_text = network_job.GetContentText()
         
-        network_job.SetFiles( files )
-        
-        network_job.OverrideBandwidth()
-        
-        HG.client_controller.network_engine.AddJob( network_job )
-        
-        network_job.WaitUntilDone()
-        
-        data = network_job.GetContent()
-        
-        j = json.loads( data )
+        j = json.loads( parsing_text )
         
         multihash = j[ 'Hash' ]
         
@@ -1917,15 +2168,18 @@ class ServiceIPFS( ServiceRemote ):
             api_base_url = self._GetAPIBaseURL()
             
         
-        url = api_base_url + 'pin/rm/' + multihash
-        
-        network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
-        
-        network_job.OverrideBandwidth()
-        
-        HG.client_controller.network_engine.AddJob( network_job )
-        
-        network_job.WaitUntilDone()
+        if self.IsPinned( multihash ):
+            
+            url = api_base_url + 'pin/rm/' + multihash
+            
+            network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
+            
+            network_job.OverrideBandwidth()
+            
+            HG.client_controller.network_engine.AddJob( network_job )
+            
+            network_job.WaitUntilDone()
+            
         
         content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_DIRECTORIES, HC.CONTENT_UPDATE_DELETE, multihash ) ]
         
@@ -1939,9 +2193,9 @@ class ServiceIPFS( ServiceRemote ):
             api_base_url = self._GetAPIBaseURL()
             
         
-        url = api_base_url + 'pin/rm/' + multihash
-        
-        try:
+        if self.IsPinned( multihash ):
+            
+            url = api_base_url + 'pin/rm/' + multihash
             
             network_job = ClientNetworkingJobs.NetworkJob( 'GET', url )
             
@@ -1950,13 +2204,6 @@ class ServiceIPFS( ServiceRemote ):
             HG.client_controller.network_engine.AddJob( network_job )
             
             network_job.WaitUntilDone()
-            
-        except HydrusExceptions.NetworkException as e:
-            
-            if 'not pinned' not in HydrusData.ToUnicode( e ):
-                
-                raise
-                
             
         
         content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { hash } ) ]

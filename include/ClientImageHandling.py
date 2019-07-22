@@ -1,30 +1,14 @@
+import numpy
 import numpy.core.multiarray # important this comes before cv!
-import ClientConstants as CC
+from . import ClientConstants as CC
 import cv2
-import HydrusConstants as HC
-import HydrusData
-import HydrusImageHandling
-import HydrusGlobals as HG
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusImageHandling
+from . import HydrusGlobals as HG
+from functools import reduce
 
-if cv2.__version__.startswith( '2' ):
-    
-    CV_IMREAD_FLAGS_SUPPORTS_ALPHA = cv2.CV_LOAD_IMAGE_UNCHANGED
-    CV_IMREAD_FLAGS_SUPPORTS_EXIF_REORIENTATION = CV_IMREAD_FLAGS_SUPPORTS_ALPHA
-    
-    # there's something wrong with these, but I don't have an easy test env for it atm
-    # CV_IMREAD_FLAGS_SUPPORTS_EXIF_REORIENTATION = cv2.CV_LOAD_IMAGE_ANYDEPTH | cv2.CV_LOAD_IMAGE_ANYCOLOR
-    
-    CV_JPEG_THUMBNAIL_ENCODE_PARAMS = []
-    CV_PNG_THUMBNAIL_ENCODE_PARAMS = []
-    
-else:
-    
-    CV_IMREAD_FLAGS_SUPPORTS_ALPHA = cv2.IMREAD_UNCHANGED
-    CV_IMREAD_FLAGS_SUPPORTS_EXIF_REORIENTATION = cv2.IMREAD_ANYDEPTH | cv2.IMREAD_ANYCOLOR # this preserves colour info but does EXIF reorientation and flipping
-    
-    CV_JPEG_THUMBNAIL_ENCODE_PARAMS = [ cv2.IMWRITE_JPEG_QUALITY, 92 ]
-    CV_PNG_THUMBNAIL_ENCODE_PARAMS = [ cv2.IMWRITE_PNG_COMPRESSION, 9 ]
-    
 cv_interpolation_enum_lookup = {}
 
 cv_interpolation_enum_lookup[ CC.ZOOM_NEAREST ] = cv2.INTER_NEAREST
@@ -33,140 +17,40 @@ cv_interpolation_enum_lookup[ CC.ZOOM_AREA ] = cv2.INTER_AREA
 cv_interpolation_enum_lookup[ CC.ZOOM_CUBIC ] = cv2.INTER_CUBIC
 cv_interpolation_enum_lookup[ CC.ZOOM_LANCZOS4 ] = cv2.INTER_LANCZOS4
 
-def EfficientlyResizeNumpyImage( numpy_image, ( target_x, target_y ) ):
+def DiscardBlankPerceptualHashes( phashes ):
     
-    ( im_y, im_x, depth ) = numpy_image.shape
+    phashes = { phash for phash in phashes if HydrusData.Get64BitHammingDistance( phash, CC.BLANK_PHASH ) > 4 }
     
-    if target_x >= im_x and target_y >= im_y:
-        
-        return numpy_image
-        
+    return phashes
     
-    # this seems to slow things down a lot, at least for cv!
-    #if im_x > 2 * target_x and im_y > 2 * target_y: result = cv2.resize( numpy_image, ( 2 * target_x, 2 * target_y ), interpolation = cv2.INTER_NEAREST )
+def GenerateNumPyImage( path, mime ):
     
-    return cv2.resize( numpy_image, ( target_x, target_y ), interpolation = cv2.INTER_AREA )
+    force_pil = HG.client_controller.new_options.GetBoolean( 'load_images_with_pil' )
     
-def EfficientlyThumbnailNumpyImage( numpy_image, ( target_x, target_y ) ):
-    
-    ( im_y, im_x, depth ) = numpy_image.shape
-    
-    if target_x >= im_x and target_y >= im_y:
-        
-        return numpy_image
-        
-    
-    ( target_x, target_y ) = HydrusImageHandling.GetThumbnailResolution( ( im_x, im_y ), ( target_x, target_y ) )
-    
-    return cv2.resize( numpy_image, ( target_x, target_y ), interpolation = cv2.INTER_AREA )
-    
-def GenerateNumpyImage( path, mime ):
-    
-    if HG.media_load_report_mode:
-        
-        HydrusData.ShowText( 'Loading media: ' + path )
-        
-    
-    if mime == HC.IMAGE_GIF or HG.client_controller.new_options.GetBoolean( 'load_images_with_pil' ):
-        
-        if HG.media_load_report_mode:
-            
-            HydrusData.ShowText( 'Loading with PIL' )
-            
-        
-        # a regular cv.imread call, can crash the whole process on random thumbs, hooray, so have this as backup
-        # it was just the read that was the problem, so this seems to work fine, even if pil is only about half as fast
-        
-        pil_image = HydrusImageHandling.GeneratePILImage( path )
-        
-        numpy_image = GenerateNumPyImageFromPILImage( pil_image )
-        
-    else:
-        
-        if HG.media_load_report_mode:
-            
-            HydrusData.ShowText( 'Loading with OpenCV' )
-            
-        
-        if mime == HC.IMAGE_JPEG:
-            
-            flags = CV_IMREAD_FLAGS_SUPPORTS_EXIF_REORIENTATION
-            
-        else:
-            
-            flags = CV_IMREAD_FLAGS_SUPPORTS_ALPHA
-            
-        
-        numpy_image = cv2.imread( path, flags = flags )
-        
-        if numpy_image is None: # doesn't support static gifs and some random other stuff
-            
-            if HG.media_load_report_mode:
-                
-                HydrusData.ShowText( 'OpenCV Failed, loading with PIL' )
-                
-            
-            pil_image = HydrusImageHandling.GeneratePILImage( path )
-            
-            numpy_image = GenerateNumPyImageFromPILImage( pil_image )
-            
-        else:
-            
-            if numpy_image.dtype == 'uint16':
-                
-                numpy_image /= 256
-                
-                numpy_image = numpy.array( numpy_image, dtype = 'uint8' )
-                
-            
-            shape = numpy_image.shape
-            
-            if len( shape ) == 2:
-                
-                # monochrome image
-                
-                convert = cv2.COLOR_GRAY2RGB
-                
-            else:
-                
-                ( im_y, im_x, depth ) = shape
-                
-                if depth == 4:
-                    
-                    convert = cv2.COLOR_BGRA2RGBA
-                    
-                else:
-                    
-                    convert = cv2.COLOR_BGR2RGB
-                    
-                
-            
-            numpy_image = cv2.cvtColor( numpy_image, convert )
-            
-        
-    
-    return numpy_image
-    
-def GenerateNumPyImageFromPILImage( pil_image ):
-    
-    pil_image = HydrusImageHandling.Dequantize( pil_image )
-    
-    ( w, h ) = pil_image.size
-    
-    s = pil_image.tobytes()
-    
-    return numpy.fromstring( s, dtype = 'uint8' ).reshape( ( h, w, len( s ) // ( w * h ) ) )
+    return HydrusImageHandling.GenerateNumPyImage( path, mime, force_pil = force_pil )
     
 def GenerateShapePerceptualHashes( path, mime ):
     
-    numpy_image = GenerateNumpyImage( path, mime )
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: loading image' )
+        
+    
+    numpy_image = GenerateNumPyImage( path, mime )
+    
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: image shape: {}'.format( numpy_image.shape ) )
+        
     
     ( y, x, depth ) = numpy_image.shape
     
     if depth == 4:
         
         # doing this on 10000x10000 pngs eats ram like mad
-        numpy_image = EfficientlyThumbnailNumpyImage( numpy_image, ( 1024, 1024 ) )
+        target_resolution = HydrusImageHandling.GetThumbnailResolution( ( x, y ), ( 1024, 1024 ) )
+        
+        numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, target_resolution )
         
         ( y, x, depth ) = numpy_image.shape
         
@@ -193,11 +77,27 @@ def GenerateShapePerceptualHashes( path, mime ):
         numpy_image_gray = cv2.cvtColor( numpy_image, cv2.COLOR_RGB2GRAY )
         
     
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: grey image shape: {}'.format( numpy_image_gray.shape ) )
+        
+    
     numpy_image_tiny = cv2.resize( numpy_image_gray, ( 32, 32 ), interpolation = cv2.INTER_AREA )
+    
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: tiny image shape: {}'.format( numpy_image_tiny.shape ) )
+        
     
     # convert to float and calc dct
     
     numpy_image_tiny_float = numpy.float32( numpy_image_tiny )
+    
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: tiny float image shape: {}'.format( numpy_image_tiny_float.shape ) )
+        HydrusData.ShowText( 'phash generation: generating dct' )
+        
     
     dct = cv2.dct( numpy_image_tiny_float )
     
@@ -216,9 +116,19 @@ def GenerateShapePerceptualHashes( path, mime ):
     
     median = numpy.median( dct_88.reshape( 64 )[1:] )
     
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: median: {}'.format( median ) )
+        
+    
     # make a monochromatic, 64-bit hash of whether the entry is above or below the median
     
     dct_88_boolean = dct_88 > median
+    
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: collapsing bytes' )
+        
     
     # convert TTTFTFTF to 11101010 by repeatedly shifting answer and adding 0 or 1
     # you can even go ( a << 1 ) + b and leave out the initial param on the reduce call as bools act like ints for this
@@ -228,7 +138,7 @@ def GenerateShapePerceptualHashes( path, mime ):
         return ( a << 1 ) + int( b )
         
     
-    bytes = []
+    list_of_bytes = []
     
     for i in range( 8 ):
         
@@ -249,12 +159,18 @@ def GenerateShapePerceptualHashes( path, mime ):
             
         '''
         
+        # this is a 0-255 int
         byte = reduce( collapse_bools_to_binary_uint, dct_88_boolean[i], 0 )
         
-        bytes.append( byte )
+        list_of_bytes.append( byte )
         
     
-    phash = str( bytearray( bytes ) )
+    phash = bytes( list_of_bytes ) # this works!
+    
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: phash: {}'.format( phash.hex() ) )
+        
     
     # now discard the blank hash, which is 1000000... and not useful
     
@@ -262,86 +178,33 @@ def GenerateShapePerceptualHashes( path, mime ):
     
     phashes.add( phash )
     
-    phashes.discard( CC.BLANK_PHASH )
+    phashes = DiscardBlankPerceptualHashes( phashes )
+    
+    if HG.phash_generation_report_mode:
+        
+        HydrusData.ShowText( 'phash generation: final phashes: {}'.format( len( phashes ) ) )
+        
     
     # we good
     
     return phashes
     
-def GenerateThumbnailFromStaticImageCV( path, dimensions = HC.UNSCALED_THUMBNAIL_DIMENSIONS, mime = None ):
+def ResizeNumPyImageForMediaViewer( mime, numpy_image, target_resolution ):
     
-    if mime is None:
-        
-        mime = HydrusFileHandling.GetMime( path )
-        
-    
-    if mime == HC.IMAGE_GIF:
-        
-        return HydrusFileHandling.GenerateThumbnailFromStaticImagePIL( path, dimensions, mime )
-        
-    
-    numpy_image = GenerateNumpyImage( path, mime )
-    
-    thumbnail_numpy_image = EfficientlyThumbnailNumpyImage( numpy_image, dimensions )
-    
-    ( im_y, im_x, depth ) = thumbnail_numpy_image.shape
-    
-    if depth == 4:
-        
-        convert = cv2.COLOR_RGBA2BGRA
-        
-    else:
-        
-        convert = cv2.COLOR_RGB2BGR
-        
-    
-    thumbnail_numpy_image = cv2.cvtColor( thumbnail_numpy_image, convert )
-    
-    if mime == HC.IMAGE_JPEG:
-        
-        ext = '.jpg'
-        
-        params = CV_JPEG_THUMBNAIL_ENCODE_PARAMS
-        
-    else:
-        
-        ext = '.png'
-        
-        params = CV_PNG_THUMBNAIL_ENCODE_PARAMS
-        
-    
-    ( result_success, result_byte_array ) = cv2.imencode( ext, thumbnail_numpy_image, params )
-    
-    if result_success:
-        
-        thumbnail = result_byte_array.tostring()
-        
-        return thumbnail
-        
-    else:
-        
-        return HydrusFileHandling.GenerateThumbnailFromStaticImagePIL( path, dimensions, mime )
-        
-    
-import HydrusFileHandling
-
-HydrusFileHandling.GenerateThumbnailFromStaticImage = GenerateThumbnailFromStaticImageCV
-    
-def ResizeNumpyImage( mime, numpy_image, ( target_x, target_y ) ):
-    
+    ( target_width, target_height ) = target_resolution
     new_options = HG.client_controller.new_options
     
     ( scale_up_quality, scale_down_quality ) = new_options.GetMediaZoomQuality( mime )
     
-    ( im_y, im_x, depth ) = numpy_image.shape
+    ( image_width, image_height, depth ) = numpy_image.shape
     
-    if ( target_x, target_y ) == ( im_x, im_y ):
+    if ( target_width, target_height ) == ( image_height, image_width ):
         
         return numpy_image
         
     else:
         
-        if target_x > im_x or target_y > im_y:
+        if target_width > image_height or target_height > image_width:
             
             interpolation = cv_interpolation_enum_lookup[ scale_up_quality ]
             
@@ -350,6 +213,6 @@ def ResizeNumpyImage( mime, numpy_image, ( target_x, target_y ) ):
             interpolation = cv_interpolation_enum_lookup[ scale_down_quality ]
             
         
-        return cv2.resize( numpy_image, ( target_x, target_y ), interpolation = interpolation )
+        return cv2.resize( numpy_image, ( target_width, target_height ), interpolation = interpolation )
         
     

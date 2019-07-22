@@ -1,14 +1,23 @@
 import calendar
 import collections
 import datetime
-import httplib
-import HydrusConstants as HC
-import HydrusData
-import HydrusSerialisable
+import http.client
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusSerialisable
+import json
+import psutil
 import socket
 import ssl
 import threading
 import time
+import urllib
+
+import urllib3
+from urllib3.exceptions import InsecureRequestWarning
+
+urllib3.disable_warnings( InsecureRequestWarning ) # stopping log-moaning when request sessions have verify = False
 
 # The calendar portion of this works in GMT. A new 'day' or 'month' is calculated based on GMT time, so it won't tick over at midnight for most people.
 # But this means a server can pass a bandwidth object to a lad and everyone can agree on when a new day is.
@@ -24,7 +33,7 @@ def ConvertBandwidthRuleToString( rule ):
     
     if bandwidth_type == HC.BANDWIDTH_TYPE_DATA:
         
-        s = HydrusData.ConvertIntToBytes( max_allowed )
+        s = HydrusData.ToHumanBytes( max_allowed )
         
     elif bandwidth_type == HC.BANDWIDTH_TYPE_REQUESTS:
         
@@ -42,35 +51,130 @@ def ConvertBandwidthRuleToString( rule ):
     
     return s
     
-def GetLocalConnection( port, https = False ):
+def LocalPortInUse( port ):
     
-    old_socket = httplib.socket.socket
+    if HC.PLATFORM_WINDOWS:
+        
+        for sconn in psutil.net_connections():
+            
+            if port == sconn.laddr[1] and sconn.status in ( 'ESTABLISHED', 'LISTEN' ): # local address: ( ip, port )
+                
+                return True
+                
+            
+        
+        return False
+        
+    else:
+        
+        s = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
+        
+        s.settimeout( 0.2 )
+        
+        result = s.connect_ex( ( '127.0.0.1', port ) )
+        
+        s.close()
+        
+        CONNECTION_SUCCESS = 0
+        
+        return result == CONNECTION_SUCCESS
+        
     
-    httplib.socket.socket = socket._socketobject
+def ParseTwistedRequestGETArgs( requests_args, int_params, byte_params, string_params, json_params, json_byte_list_params ):
     
-    try:
+    args = ParsedRequestArguments()
+    
+    for name_bytes in requests_args:
         
-        if https:
+        values_bytes = requests_args[ name_bytes ]
+        
+        try:
             
-            context = ssl.SSLContext( ssl.PROTOCOL_SSLv23 )
-            context.options |= ssl.OP_NO_SSLv2
-            context.options |= ssl.OP_NO_SSLv3
+            name = str( name_bytes, 'utf-8' )
             
-            connection = httplib.HTTPSConnection( '127.0.0.1', port, timeout = 8, context = context )
+        except UnicodeDecodeError:
             
-        else:
-            
-            connection = httplib.HTTPConnection( '127.0.0.1', port, timeout = 8 )
+            continue
             
         
-        connection.connect()
+        value_bytes = values_bytes[0]
         
-    finally:
+        try:
+            
+            value = str( value_bytes, 'utf-8' )
+            
+        except UnicodeDecodeError:
+            
+            continue
+            
         
-        httplib.socket.socket = old_socket
+        if name in int_params:
+            
+            try:
+                
+                args[ name ] = int( value )
+                
+            except:
+                
+                raise HydrusExceptions.BadRequestException( 'I was expecting to parse \'' + name + '\' as an integer, but it failed.' )
+                
+            
+        elif name in byte_params:
+            
+            try:
+                
+                args[ name ] = bytes.fromhex( value )
+                
+            except:
+                
+                raise HydrusExceptions.BadRequestException( 'I was expecting to parse \'' + name + '\' as a hex string, but it failed.' )
+                
+            
+        elif name in string_params:
+            
+            try:
+                
+                args[ name ] = urllib.parse.unquote( value )
+                
+            except:
+                
+                raise HydrusExceptions.BadRequestException( 'I was expecting to parse \'' + name + '\' as a percent-encdode string, but it failed.' )
+                
+            
+        elif name in json_params:
+            
+            try:
+                
+                args[ name ] = json.loads( urllib.parse.unquote( value ) )
+                
+            except:
+                
+                raise HydrusExceptions.BadRequestException( 'I was expecting to parse \'' + name + '\' as a json-encoded string, but it failed.' )
+                
+            
+        elif name in json_byte_list_params:
+            
+            try:
+                
+                list_of_hex_strings = json.loads( urllib.parse.unquote( value ) )
+                
+                args[ name ] = [ bytes.fromhex( hex_string ) for hex_string in list_of_hex_strings ]
+                
+            except:
+                
+                raise HydrusExceptions.BadRequestException( 'I was expecting to parse \'' + name + '\' as a json-encoded hex strings, but it failed.' )
+                
+            
         
     
-    return connection
+    return args
+    
+class ParsedRequestArguments( dict ):
+    
+    def __missing__( self, key ):
+        
+        raise HydrusExceptions.BadRequestException( 'It looks like the parameter "{}" was missing!'.format( key ) )
+        
     
 class BandwidthRules( HydrusSerialisable.SerialisableBase ):
     
@@ -227,9 +331,18 @@ class BandwidthRules( HydrusSerialisable.SerialisableBase ):
             
             rules_sorted = list( self._rules )
             
-            def key( ( bandwidth_type, time_delta, max_allowed ) ):
+            def key( rule_tuple ):
                 
-                return time_delta
+                ( bandwidth_type, time_delta, max_allowed ) = rule_tuple
+                
+                if time_delta is None:
+                    
+                    return -1
+                    
+                else:
+                    
+                    return time_delta
+                    
                 
             
             rules_sorted.sort( key = key )
@@ -325,7 +438,7 @@ class BandwidthTracker( HydrusSerialisable.SerialisableBase ):
         
         for d in ( self._months_bytes, self._days_bytes, self._hours_bytes, self._minutes_bytes, self._seconds_bytes, self._months_requests, self._days_requests, self._hours_requests, self._minutes_requests, self._seconds_requests ):
             
-            dicts_flat.append( d.items() )
+            dicts_flat.append( list( d.items() ) )
             
         
         return dicts_flat
@@ -470,7 +583,7 @@ class BandwidthTracker( HydrusSerialisable.SerialisableBase ):
             
             since = HydrusData.GetNow() - search_time_delta
             
-            return sum( ( value for ( timestamp, value ) in counter.items() if timestamp >= since ) )
+            return sum( ( value for ( timestamp, value ) in list(counter.items()) if timestamp >= since ) )
             
         
     
@@ -521,7 +634,7 @@ class BandwidthTracker( HydrusSerialisable.SerialisableBase ):
         
         since = now - SEARCH_DELTA
         
-        valid_keys = [ key for key in counter.keys() if key >= since ]
+        valid_keys = [ key for key in list(counter.keys()) if key >= since ]
         
         if len( valid_keys ) == 0:
             
@@ -555,7 +668,7 @@ class BandwidthTracker( HydrusSerialisable.SerialisableBase ):
             
             def clear_counter( counter, timestamp ):
                 
-                bad_keys = [ key for key in counter.keys() if key < timestamp ]
+                bad_keys = [ key for key in list(counter.keys()) if key < timestamp ]
                 
                 for bad_key in bad_keys:
                     
@@ -583,7 +696,7 @@ class BandwidthTracker( HydrusSerialisable.SerialisableBase ):
             num_bytes = self._GetUsage( HC.BANDWIDTH_TYPE_DATA, None, True )
             num_requests = self._GetUsage( HC.BANDWIDTH_TYPE_REQUESTS, None, True )
             
-            return 'used ' + HydrusData.ConvertIntToBytes( num_bytes ) + ' in ' + HydrusData.ToHumanInt( num_requests ) + ' requests this month'
+            return 'used ' + HydrusData.ToHumanBytes( num_bytes ) + ' in ' + HydrusData.ToHumanInt( num_requests ) + ' requests this month'
             
         
     
@@ -593,7 +706,7 @@ class BandwidthTracker( HydrusSerialisable.SerialisableBase ):
             
             result = []
             
-            for ( month_time, usage ) in self._months_bytes.items():
+            for ( month_time, usage ) in list(self._months_bytes.items()):
                 
                 month_dt = datetime.datetime.utcfromtimestamp( month_time )
                 
@@ -657,7 +770,7 @@ class BandwidthTracker( HydrusSerialisable.SerialisableBase ):
                 
                 time_delta_in_which_bandwidth_counts = time_delta + window
                 
-                time_and_values = counter.items()
+                time_and_values = list(counter.items())
                 
                 time_and_values.sort( reverse = True )
                 

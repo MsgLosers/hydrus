@@ -1,20 +1,21 @@
-import ClientCaches
-import ClientConstants as CC
-import ClientData
-import ClientGUICommon
-import ClientGUIMenus
-import ClientGUIShortcuts
-import ClientGUITopLevelWindows
-import ClientSearch
-import ClientSerialisable
-import ClientTags
+from . import ClientCaches
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientGUICommon
+from . import ClientGUIFunctions
+from . import ClientGUIMenus
+from . import ClientGUIShortcuts
+from . import ClientGUITopLevelWindows
+from . import ClientSearch
+from . import ClientSerialisable
+from . import ClientTags
 import collections
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
-import HydrusTags
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
+from . import HydrusTags
 import os
 import wx
 
@@ -57,7 +58,7 @@ class AddEditDeleteListBox( wx.Panel ):
         
         #
         
-        ( width, height ) = ClientGUICommon.ConvertTextToPixels( self._listbox, ( 20, height_num_chars ) )
+        ( width, height ) = ClientGUIFunctions.ConvertTextToPixels( self._listbox, ( 20, height_num_chars ) )
         
         self._listbox.SetInitialSize( ( width, height ) )
         
@@ -110,8 +111,8 @@ class AddEditDeleteListBox( wx.Panel ):
         
         choice_tuples = [ ( self._data_to_pretty_callable( default ), default, selected ) for default in defaults ]
         
-        import ClientGUITopLevelWindows
-        import ClientGUIScrolledPanelsEdit
+        from . import ClientGUITopLevelWindows
+        from . import ClientGUIScrolledPanelsEdit
         
         with ClientGUITopLevelWindows.DialogEdit( self, 'select the defaults to add' ) as dlg:
             
@@ -142,7 +143,7 @@ class AddEditDeleteListBox( wx.Panel ):
         
         indices.sort( reverse = True )
         
-        import ClientGUIDialogs
+        from . import ClientGUIDialogs
         
         with ClientGUIDialogs.DialogYesNo( self, 'Remove all selected?' ) as dlg_yn:
             
@@ -220,8 +221,8 @@ class AddEditDeleteListBox( wx.Panel ):
         
         if export_object is not None:
             
-            import ClientGUITopLevelWindows
-            import ClientGUISerialisable
+            from . import ClientGUITopLevelWindows
+            from . import ClientGUISerialisable
             
             with ClientGUITopLevelWindows.DialogNullipotent( self, 'export to png' ) as dlg:
                 
@@ -250,8 +251,8 @@ class AddEditDeleteListBox( wx.Panel ):
             return
             
         
-        import ClientGUITopLevelWindows
-        import ClientGUISerialisable
+        from . import ClientGUITopLevelWindows
+        from . import ClientGUISerialisable
         
         with ClientGUITopLevelWindows.DialogNullipotent( self, 'export to pngs' ) as dlg:
             
@@ -289,7 +290,16 @@ class AddEditDeleteListBox( wx.Panel ):
     
     def _ImportFromClipboard( self ):
         
-        raw_text = HG.client_controller.GetClipboardText()
+        try:
+            
+            raw_text = HG.client_controller.GetClipboardText()
+            
+        except HydrusExceptions.DataMissing as e:
+            
+            wx.MessageBox( str( e ) )
+            
+            return
+            
         
         try:
             
@@ -311,22 +321,20 @@ class AddEditDeleteListBox( wx.Panel ):
                 
                 for path in dlg.GetPaths():
                     
-                    path = HydrusData.ToUnicode( path )
-                    
                     try:
                         
                         payload = ClientSerialisable.LoadFromPng( path )
                         
                     except Exception as e:
                         
-                        wx.MessageBox( HydrusData.ToUnicode( e ) )
+                        wx.MessageBox( str( e ) )
                         
                         return
                         
                     
                     try:
                         
-                        obj = HydrusSerialisable.CreateFromNetworkString( payload )
+                        obj = HydrusSerialisable.CreateFromNetworkBytes( payload )
                         
                         self._ImportObject( obj )
                         
@@ -539,11 +547,11 @@ class QueueListBox( wx.Panel ):
         
         self._listbox = wx.ListBox( self, style = wx.LB_EXTENDED )
         
-        self._up_button = ClientGUICommon.BetterButton( self, u'\u2191', self._Up )
+        self._up_button = ClientGUICommon.BetterButton( self, '\u2191', self._Up )
         
         self._delete_button = ClientGUICommon.BetterButton( self, 'X', self._Delete )
         
-        self._down_button = ClientGUICommon.BetterButton( self, u'\u2193', self._Down )
+        self._down_button = ClientGUICommon.BetterButton( self, '\u2193', self._Down )
         
         self._add_button = ClientGUICommon.BetterButton( self, 'add', self._Add )
         self._edit_button = ClientGUICommon.BetterButton( self, 'edit', self._Edit )
@@ -585,7 +593,7 @@ class QueueListBox( wx.Panel ):
         
         #
         
-        ( width, height ) = ClientGUICommon.ConvertTextToPixels( self._listbox, ( 20, height_num_chars ) )
+        ( width, height ) = ClientGUIFunctions.ConvertTextToPixels( self._listbox, ( 20, height_num_chars ) )
         
         self._listbox.SetInitialSize( ( width, height ) )
         
@@ -627,7 +635,7 @@ class QueueListBox( wx.Panel ):
         
         indices.sort( reverse = True )
         
-        import ClientGUIDialogs
+        from . import ClientGUIDialogs
         
         with ClientGUIDialogs.DialogYesNo( self, 'Remove all selected?' ) as dlg_yn:
             
@@ -834,7 +842,7 @@ class ListBox( wx.ScrolledWindow ):
         self._last_view_start = None
         self._dirty = True
         
-        self._client_bmp = wx.Bitmap( 20, 20, 24 )
+        self._client_bmp = HG.client_controller.bitmap_manager.GetBitmap( 20, 20, 24 )
         
         dc = wx.MemoryDC( self._client_bmp )
         
@@ -846,7 +854,7 @@ class ListBox( wx.ScrolledWindow ):
         
         self.SetScrollRate( 0, self._text_y )
         
-        ( min_width, min_height ) = ClientGUICommon.ConvertTextToPixels( self, ( 16, height_num_chars ) )
+        ( min_width, min_height ) = ClientGUIFunctions.ConvertTextToPixels( self, ( 16, height_num_chars ) )
         
         self.SetMinClientSize( ( min_width, min_height ) )
         
@@ -895,6 +903,16 @@ class ListBox( wx.ScrolledWindow ):
             
         
     
+    def _CanHitIndex( self, index ):
+        
+        return True
+        
+    
+    def _CanSelectIndex( self, index ):
+        
+        return True
+        
+    
     def _Clear( self ):
         
         self._terms = set()
@@ -939,7 +957,7 @@ class ListBox( wx.ScrolledWindow ):
         
         y = mouse_event.GetY() + y_offset
         
-        row_index = ( y / self._text_y )
+        row_index = y // self._text_y
         
         if row_index >= len( self._ordered_terms ):
             
@@ -994,22 +1012,60 @@ class ListBox( wx.ScrolledWindow ):
         return self._ordered_terms[ index ]
         
     
-    def _GetTextColour( self, term ):
+    def _GetTextsAndColours( self, term ):
         
-        return ( 0, 111, 250 )
+        text = self._terms_to_texts[ term ]
+        
+        return [ ( text, ( 0, 111, 250 ) ) ]
         
     
     def _GetSafeHitIndex( self, hit_index, direction = None ):
         
+        if direction is None:
+            
+            if hit_index == 0:
+                
+                direction = 1
+                
+            else:
+                
+                direction = -1
+                
+            
+        
+        num_terms = len( self._ordered_terms )
+        
+        if num_terms == 0:
+            
+            return None
+            
+        
+        original_hit_index = hit_index
+        
         if hit_index is not None:
             
-            if hit_index == -1 or hit_index > len( self._ordered_terms ):
+            # if click/selection is out of bounds, fix it
+            if hit_index == -1 or hit_index > num_terms:
                 
-                hit_index = len( self._ordered_terms ) - 1
+                hit_index = num_terms - 1
                 
-            elif hit_index == len( self._ordered_terms ) or hit_index < -1:
+            elif hit_index == num_terms or hit_index < -1:
                 
                 hit_index = 0
+                
+            
+            # while it is not ok to hit, move index
+            
+            while not self._CanHitIndex( hit_index ):
+                
+                hit_index = ( hit_index + direction ) % num_terms
+                
+                if hit_index == original_hit_index:
+                    
+                    # bail out if we circled around not finding an ok one to hit
+                    
+                    return None
+                    
                 
             
         
@@ -1054,7 +1110,7 @@ class ListBox( wx.ScrolledWindow ):
                     lower = min( hit_index, self._last_hit_index )
                     upper = max( hit_index, self._last_hit_index )
                     
-                    to_select = range( lower, upper + 1 )
+                    to_select = list( range( lower, upper + 1) )
                     
                 else:
                     
@@ -1121,7 +1177,7 @@ class ListBox( wx.ScrolledWindow ):
             
             if y < start_y * y_unit:
                 
-                y_to_scroll_to = y / y_unit
+                y_to_scroll_to = y // y_unit
                 
                 #self.Scroll( -1, y_to_scroll_to )
                 
@@ -1129,7 +1185,7 @@ class ListBox( wx.ScrolledWindow ):
                 
             elif y > ( start_y * y_unit ) + height - self._text_y:
                 
-                y_to_scroll_to = ( y - height ) / y_unit
+                y_to_scroll_to = ( y - height ) // y_unit
                 
                 #self.Scroll( -1, y_to_scroll_to + 2 )
                 
@@ -1166,9 +1222,9 @@ class ListBox( wx.ScrolledWindow ):
         
         ( my_width, my_height ) = self.GetClientSize()
         
-        first_visible_index = y_offset / self._text_y
+        first_visible_index = y_offset // self._text_y
         
-        last_visible_index = ( y_offset + my_height ) / self._text_y
+        last_visible_index = ( y_offset + my_height ) // self._text_y
         
         if ( y_offset + my_height ) % self._text_y != 0:
             
@@ -1187,28 +1243,49 @@ class ListBox( wx.ScrolledWindow ):
             
             term = self._GetTerm( current_index )
             
-            text = self._terms_to_texts[ term ]
+            texts_and_colours = self._GetTextsAndColours( term )
             
-            ( r, g, b ) = self._GetTextColour( term )
+            there_is_more_than_one_text = len( texts_and_colours ) > 1
             
-            text_colour = wx.Colour( r, g, b )
+            x_start = self.TEXT_X_PADDING
             
-            if term in self._selected_terms:
+            for ( text, ( r, g, b ) ) in texts_and_colours:
                 
-                dc.SetBrush( wx.Brush( text_colour ) )
+                text_colour = wx.Colour( r, g, b )
                 
-                dc.SetPen( wx.TRANSPARENT_PEN )
+                if term in self._selected_terms:
+                    
+                    dc.SetBrush( wx.Brush( text_colour ) )
+                    
+                    dc.SetPen( wx.TRANSPARENT_PEN )
+                    
+                    if x_start == self.TEXT_X_PADDING:
+                        
+                        background_colour_x = 0
+                        
+                    else:
+                        
+                        background_colour_x = x_start
+                        
+                    
+                    dc.DrawRectangle( background_colour_x, i * self._text_y, my_width, self._text_y )
+                    
+                    text_colour = self._background_colour
+                    
                 
-                dc.DrawRectangle( 0, i * self._text_y, my_width, self._text_y )
+                dc.SetTextForeground( text_colour )
                 
-                text_colour = self._background_colour
+                ( x, y ) = ( x_start, i * self._text_y )
                 
-            
-            dc.SetTextForeground( text_colour )
-            
-            ( x, y ) = ( self.TEXT_X_PADDING, i * self._text_y )
-            
-            dc.DrawText( text, x, y )
+                dc.DrawText( text, x, y )
+                
+                if there_is_more_than_one_text:
+                    
+                    ( text_width, text_height ) = dc.GetTextExtent( text )
+                    
+                    x_start += text_width
+                    
+                
             
         
         self._dirty = False
@@ -1244,6 +1321,11 @@ class ListBox( wx.ScrolledWindow ):
         
     
     def _Select( self, index ):
+        
+        if not self._CanSelectIndex( index ):
+            
+            return
+            
         
         term = self._GetTerm( index )
         
@@ -1291,7 +1373,7 @@ class ListBox( wx.ScrolledWindow ):
         
         key_code = event.GetKeyCode()
         
-        if ClientGUICommon.WindowHasFocus( self ) and key_code in CC.DELETE_KEYS:
+        if ClientGUIFunctions.WindowHasFocus( self ) and key_code in CC.DELETE_KEYS:
             
             self._DeleteActivate()
             
@@ -1397,7 +1479,7 @@ class ListBox( wx.ScrolledWindow ):
         
         if ( my_x, my_y ) != self._client_bmp.GetSize():
             
-            self._client_bmp = wx.Bitmap( my_x, my_y, 24 )
+            self._client_bmp = HG.client_controller.bitmap_manager.GetBitmap( my_x, my_y, 24 )
             
             self._dirty = True
             
@@ -1414,7 +1496,7 @@ class ListBox( wx.ScrolledWindow ):
         
         ( my_x, my_y ) = self.GetClientSize()
         
-        self._num_rows_per_page = my_y / self._text_y
+        self._num_rows_per_page = my_y // self._text_y
         
         self._SetVirtualSize()
         
@@ -1456,6 +1538,7 @@ class ListBox( wx.ScrolledWindow ):
     
 class ListBoxTags( ListBox ):
     
+    ors_are_under_construction = False
     has_counts = False
     
     can_spawn_new_windows = True
@@ -1466,12 +1549,15 @@ class ListBoxTags( ListBox ):
         
         self._get_current_predicates_callable = None
         
+        self._page_key = None # placeholder. if a subclass sets this, it changes menu behaviour to allow 'select this tag' menu pubsubs
+        
         self._UpdateBackgroundColour()
         
         self.Bind( wx.EVT_RIGHT_DOWN, self.EventMouseRightClick )
         self.Bind( wx.EVT_MIDDLE_DOWN, self.EventMouseMiddleClick )
         
-        HG.client_controller.sub( self, 'SiblingsHaveChanged', 'notify_new_siblings_gui' )
+        HG.client_controller.sub( self, 'ForceTagRecalc', 'notify_new_siblings_gui' )
+        HG.client_controller.sub( self, 'ForceTagRecalc', 'notify_new_force_refresh_tags_gui' )
         HG.client_controller.sub( self, '_UpdateBackgroundColour', 'notify_new_colourset' )
         
     
@@ -1494,22 +1580,40 @@ class ListBoxTags( ListBox ):
         raise NotImplementedError()
         
     
-    def _GetTextColour( self, term ):
+    def _GetTextsAndColours( self, term ):
         
         namespace_colours = self._GetNamespaceColours()
         
-        namespace = self._GetNamespaceFromTerm( term )
-        
-        if namespace in namespace_colours:
+        if isinstance( term, ClientSearch.Predicate ) and term.GetType() == HC.PREDICATE_TYPE_OR_CONTAINER:
             
-            ( r, g, b ) = namespace_colours[ namespace ]
+            texts_and_namespaces = term.GetTextsAndNamespaces( or_under_construction = self.ors_are_under_construction )
             
         else:
             
-            ( r, g, b ) = namespace_colours[ None ]
+            text = self._terms_to_texts[ term ]
+            
+            namespace = self._GetNamespaceFromTerm( term )
+            
+            texts_and_namespaces = [ ( text, namespace ) ]
             
         
-        return ( r, g, b )
+        texts_and_colours = []
+        
+        for ( text, namespace ) in texts_and_namespaces:
+            
+            if namespace in namespace_colours:
+                
+                ( r, g, b ) = namespace_colours[ namespace ]
+                
+            else:
+                
+                ( r, g, b ) = namespace_colours[ None ]
+                
+            
+            texts_and_colours.append( ( text, ( r, g, b ) ) )
+            
+        
+        return texts_and_colours
         
     
     def _NewSearchPage( self ):
@@ -1532,7 +1636,7 @@ class ListBoxTags( ListBox ):
         
         if len( predicates ) > 0:
             
-            s = [ predicate.GetUnicode() for predicate in predicates ]
+            s = [ predicate.ToString() for predicate in predicates ]
             
             s.sort()
             
@@ -1562,7 +1666,7 @@ class ListBoxTags( ListBox ):
         
         for predicate in predicates:
             
-            page_name = predicate.GetUnicode()
+            page_name = predicate.ToString()
             
             HG.client_controller.pub( 'new_page_query', CC.LOCAL_FILE_SERVICE_KEY, initial_predicates = ( predicate, ), page_name = page_name )
             
@@ -1578,11 +1682,11 @@ class ListBoxTags( ListBox ):
                 
                 if isinstance( term, ClientSearch.Predicate ):
                     
-                    text = term.GetUnicode( with_count = False )
+                    text = term.ToString( with_count = False )
                     
                 else:
                     
-                    text = HydrusData.ToUnicode( term )
+                    text = str( term )
                     
                 
                 if command == 'copy_sub_terms':
@@ -1616,7 +1720,7 @@ class ListBoxTags( ListBox ):
     
     def _ProcessMenuTagEvent( self, command ):
         
-        import ClientGUITags
+        from . import ClientGUITags
         
         if command == 'censorship':
             
@@ -1683,6 +1787,23 @@ class ListBoxTags( ListBox ):
             
             if len( self._selected_terms ) > 0:
                 
+                selected_tags = set()
+                
+                for term in self._selected_terms:
+                    
+                    if isinstance( term, ClientSearch.Predicate ):
+                        
+                        if term.GetType() == HC.PREDICATE_TYPE_TAG and term.IsInclusive():
+                            
+                            selected_tags.add( term.GetValue() )
+                            
+                        
+                    else:
+                        
+                        selected_tags.add( term )
+                        
+                    
+                
                 if len( self._selected_terms ) == 1:
                     
                     ( term, ) = self._selected_terms
@@ -1695,12 +1816,12 @@ class ListBoxTags( ListBox ):
                             
                         else:
                             
-                            selection_string = '"' + term.GetUnicode( with_count = False ) + '"'
+                            selection_string = '"' + term.ToString( with_count = False ) + '"'
                             
                         
                     else:
                         
-                        selection_string = '"' + HydrusData.ToUnicode( term ) + '"'
+                        selection_string = '"' + str( term ) + '"'
                         
                     
                 else:
@@ -1752,6 +1873,43 @@ class ListBoxTags( ListBox ):
                 
                 ClientGUIMenus.AppendSeparator( menu )
                 
+                if self._page_key is not None:
+                    
+                    if len( selected_tags ) > 0:
+                        
+                        tags_sorted_to_show_on_menu = HydrusTags.SortNumericTags( selected_tags )
+                        
+                        tags_sorted_to_show_on_menu_string = ', '.join( tags_sorted_to_show_on_menu )
+                        
+                        while len( tags_sorted_to_show_on_menu_string ) > 64:
+                            
+                            if len( tags_sorted_to_show_on_menu ) == 1:
+                                
+                                tags_sorted_to_show_on_menu_string = '(many/long tags)'
+                                
+                            else:
+                                
+                                tags_sorted_to_show_on_menu.pop( -1 )
+                                
+                                tags_sorted_to_show_on_menu_string = ', '.join( tags_sorted_to_show_on_menu + [ '\u2026' ] )
+                                
+                            
+                        
+                        label = 'select files with "{}"'.format( tags_sorted_to_show_on_menu_string )
+                        
+                        ClientGUIMenus.AppendMenuItem( self, menu, label, 'Select the files with these tags.', HG.client_controller.pub, 'select_files_with_tags', self._page_key, 'AND', set( selected_tags ) )
+                        
+                        if len( selected_tags ) > 1:
+                            
+                            label = 'select files with any of "{}"'.format( tags_sorted_to_show_on_menu_string )
+                            
+                            ClientGUIMenus.AppendMenuItem( self, menu, label, 'Select the files with any of these tags.', HG.client_controller.pub, 'select_files_with_tags', self._page_key, 'OR', set( selected_tags ) )
+                            
+                        
+                    
+                
+                ClientGUIMenus.AppendSeparator( menu )
+                
                 ClientGUIMenus.AppendMenuItem( self, menu, 'copy ' + selection_string, 'Copy the selected predicates to your clipboard.', self._ProcessMenuCopyEvent, 'copy_terms' )
                 
                 if len( self._selected_terms ) == 1:
@@ -1771,9 +1929,9 @@ class ListBoxTags( ListBox ):
                     
                 
             
-            ClientGUIMenus.AppendSeparator( menu )
-            
             if len( self._ordered_terms ) > len( self._selected_terms ):
+                
+                ClientGUIMenus.AppendSeparator( menu )
                 
                 ClientGUIMenus.AppendMenuItem( self, menu, 'copy all tags', 'Copy all the predicates in this list to your clipboard.', self._ProcessMenuCopyEvent, 'copy_all_tags' )
                 
@@ -1787,7 +1945,7 @@ class ListBoxTags( ListBox ):
                 
                 term_types = [ type( term ) for term in self._selected_terms ]
                 
-                if str in term_types or unicode in term_types:
+                if str in term_types or str in term_types:
                     
                     ClientGUIMenus.AppendSeparator( menu )
                     
@@ -1823,7 +1981,7 @@ class ListBoxTags( ListBox ):
         return set( self._selected_terms )
         
     
-    def SiblingsHaveChanged( self ):
+    def ForceTagRecalc( self ):
         
         pass
         
@@ -1831,6 +1989,82 @@ class ListBoxTags( ListBox ):
 class ListBoxTagsPredicates( ListBoxTags ):
     
     has_counts = True
+    
+    def _CanHitIndex( self, index ):
+        
+        result = ListBoxTags._CanHitIndex( self, index )
+        
+        if not result:
+            
+            return False
+            
+        
+        term = self._GetTerm( index )
+        
+        if term.GetType() in ( HC.PREDICATE_TYPE_LABEL, HC.PREDICATE_TYPE_PARENT ):
+            
+            return False
+            
+        
+        return True
+        
+    
+    def _CanSelectIndex( self, index ):
+        
+        result = ListBoxTags._CanSelectIndex( self, index )
+        
+        if not result:
+            
+            return False
+            
+        
+        term = self._GetTerm( index )
+        
+        if term.GetType() == HC.PREDICATE_TYPE_LABEL:
+            
+            return False
+            
+        
+        return True
+        
+    
+    def _Deselect( self, index ):
+        
+        to_deselect = self._GetWithParentIndices( index )
+        
+        for index in to_deselect:
+            
+            ListBoxTags._Deselect( self, index )
+            
+        
+    
+    def _GetAllTagsForClipboard( self, with_counts = False ):
+        
+        return [ term.ToString( with_counts ) for term in self._terms ]
+        
+    
+    def _GetNamespaceFromTerm( self, term ):
+        
+        predicate = term
+        
+        namespace = predicate.GetNamespace()
+        
+        return namespace
+        
+    
+    def _GetSimplifiedTextFromTerm( self, term ):
+        
+        predicate = term
+        
+        return predicate.ToString( with_counts = False )
+        
+    
+    def _GetTextFromTerm( self, term ):
+        
+        predicate = term
+        
+        return predicate.ToString()
+        
     
     def _GetWithParentIndices( self, index ):
         
@@ -1857,68 +2091,6 @@ class ListBoxTagsPredicates( ListBoxTags ):
         return indices
         
     
-    def _Deselect( self, index ):
-        
-        to_deselect = self._GetWithParentIndices( index )
-        
-        for index in to_deselect:
-            
-            ListBoxTags._Deselect( self, index )
-            
-        
-    
-    def _GetAllTagsForClipboard( self, with_counts = False ):
-        
-        return [ term.GetUnicode( with_counts ) for term in self._terms ]
-        
-    
-    def _GetNamespaceFromTerm( self, term ):
-        
-        predicate = term
-        
-        namespace = predicate.GetNamespace()
-        
-        return namespace
-        
-    
-    def _GetSafeHitIndex( self, hit_index, direction = None ):
-        
-        hit_index = ListBox._GetSafeHitIndex( self, hit_index )
-        
-        if direction is not None and hit_index is not None:
-            
-            hit_term = self._GetTerm( hit_index )
-            
-            while hit_term.GetType() == HC.PREDICATE_TYPE_PARENT:
-                
-                hit_index += direction
-                
-                if hit_index >= len( self._ordered_terms ):
-                    
-                    hit_index = 0
-                    
-                
-                hit_term = self._GetTerm( hit_index )
-                
-            
-        
-        return hit_index
-        
-    
-    def _GetSimplifiedTextFromTerm( self, term ):
-        
-        predicate = term
-        
-        return predicate.GetUnicode( with_counts = False )
-        
-    
-    def _GetTextFromTerm( self, term ):
-        
-        predicate = term
-        
-        return predicate.GetUnicode()
-        
-    
     def _HasPredicate( self, predicate ):
         
         return predicate in self._terms
@@ -1927,16 +2099,6 @@ class ListBoxTagsPredicates( ListBoxTags ):
     def _Hit( self, shift, ctrl, hit_index ):
         
         hit_index = self._GetSafeHitIndex( hit_index )
-        
-        if hit_index is not None and hit_index > 0:
-            
-            # this realigns the hit index in the up direction, so if user clicks on parent, they get the upper child
-            
-            while self._GetTerm( hit_index ).GetType() == HC.PREDICATE_TYPE_PARENT:
-                
-                hit_index -= 1
-                
-            
         
         ListBoxTags._Hit( self, shift, ctrl, hit_index )
         
@@ -2056,7 +2218,7 @@ class ListBoxTagsActiveSearchPredicates( ListBoxTagsPredicates ):
         
         predicate = term
         
-        return predicate.GetUnicode( render_for_user = True )
+        return predicate.ToString( render_for_user = True )
         
     
     def _ProcessMenuPredicateEvent( self, command ):
@@ -2103,13 +2265,15 @@ class ListBoxTagsAC( ListBoxTagsPredicates ):
     
     def _Activate( self ):
         
+        shift_down = wx.GetKeyState( wx.WXK_SHIFT )
+        
         predicates = [ term for term in self._selected_terms if term.GetType() != HC.PREDICATE_TYPE_PARENT ]
         
         predicates = HG.client_controller.GetGUI().FleshOutPredicates( predicates )
         
         if len( predicates ) > 0:
             
-            self._callable( predicates )
+            self._callable( predicates, shift_down )
             
         
     
@@ -2159,17 +2323,27 @@ class ListBoxTagsAC( ListBoxTagsPredicates ):
                 
                 if len( predicates ) > 1:
                     
-                    if HG.client_controller.new_options.GetBoolean( 'ac_select_first_with_count' ):
+                    skip_ors = True
+                    
+                    skip_countless = HG.client_controller.new_options.GetBoolean( 'ac_select_first_with_count' )
+                    
+                    for ( index, predicate ) in enumerate( predicates ):
                         
-                        for ( index, predicate ) in enumerate( predicates ):
+                        # now only apply this to simple tags, not wildcards and system tags
+                        
+                        if skip_ors and predicate.GetType() == HC.PREDICATE_TYPE_OR_CONTAINER:
                             
-                            if predicate.GetCount() != 0:
-                                
-                                hit_index = index
-                                
-                                break
-                                
+                            continue
                             
+                        
+                        if skip_countless and predicate.GetType() in ( HC.PREDICATE_TYPE_PARENT, HC.PREDICATE_TYPE_TAG ) and predicate.GetCount() == 0:
+                            
+                            continue
+                            
+                        
+                        hit_index = index
+                        
+                        break
                         
                     
                 
@@ -2185,11 +2359,13 @@ class ListBoxTagsAC( ListBoxTagsPredicates ):
     
 class ListBoxTagsACRead( ListBoxTagsAC ):
     
+    ors_are_under_construction = True
+    
     def _GetTextFromTerm( self, term ):
         
         predicate = term
         
-        return predicate.GetUnicode( render_for_user = True )
+        return predicate.ToString( render_for_user = True, or_under_construction = self.ors_are_under_construction )
         
     
 class ListBoxTagsACWrite( ListBoxTagsAC ):
@@ -2198,7 +2374,7 @@ class ListBoxTagsACWrite( ListBoxTagsAC ):
         
         predicate = term
         
-        return predicate.GetUnicode( sibling_service_key = self._service_key )
+        return predicate.ToString( sibling_service_key = self._service_key )
         
     
 class ListBoxTagsCensorship( ListBoxTags ):
@@ -2319,7 +2495,7 @@ class ListBoxTagsColourOptions( ListBoxTags ):
         
         ListBoxTags.__init__( self, parent )
         
-        for ( namespace, colour ) in initial_namespace_colours.items():
+        for ( namespace, colour ) in list(initial_namespace_colours.items()):
             
             colour = tuple( colour ) # tuple to convert from list, for oooold users who have list colours
             
@@ -2337,7 +2513,7 @@ class ListBoxTagsColourOptions( ListBoxTags ):
         
         if len( namespaces ) > 0:
             
-            import ClientGUIDialogs
+            from . import ClientGUIDialogs
             
             with ClientGUIDialogs.DialogYesNo( self, 'Delete all selected colours?' ) as dlg:
                 
@@ -2464,12 +2640,12 @@ class ListBoxTagsStrings( ListBoxTags ):
         
         tag = term
         
-        return HydrusData.ToUnicode( tag )
+        return str( tag )
         
     
     def _GetTextFromTerm( self, term ):
         
-        siblings_manager = HG.client_controller.GetManager( 'tag_siblings' )
+        siblings_manager = HG.client_controller.tag_siblings_manager
         
         tag = term
         
@@ -2505,6 +2681,13 @@ class ListBoxTagsStrings( ListBoxTags ):
         return set( self._terms )
         
     
+    def SetTagServiceKey( self, service_key ):
+        
+        self._service_key = service_key
+        
+        self._RecalcTags()
+        
+    
     def SetTags( self, tags ):
         
         self._Clear()
@@ -2517,7 +2700,7 @@ class ListBoxTagsStrings( ListBoxTags ):
         self._RecalcTags()
         
     
-    def SiblingsHaveChanged( self ):
+    def ForceTagRecalc( self ):
         
         self._RecalcTags()
         
@@ -2672,7 +2855,7 @@ class ListBoxTagsSelection( ListBoxTags ):
         
         tag = term
         
-        return HydrusData.ToUnicode( tag )
+        return str( tag )
         
     
     def _GetTextFromTerm( self, term ):
@@ -2697,7 +2880,7 @@ class ListBoxTagsSelection( ListBoxTags ):
         
         if not self._collapse_siblings:
             
-            siblings_manager = HG.client_controller.GetManager( 'tag_siblings' )
+            siblings_manager = HG.client_controller.tag_siblings_manager
             
             sibling = siblings_manager.GetSibling( self._tag_service_key, tag )
             
@@ -2722,10 +2905,10 @@ class ListBoxTagsSelection( ListBoxTags ):
             
             nonzero_tags = set()
             
-            if self._show_current: nonzero_tags.update( ( tag for ( tag, count ) in self._current_tags_to_count.items() if count > 0 ) )
-            if self._show_deleted: nonzero_tags.update( ( tag for ( tag, count ) in self._deleted_tags_to_count.items() if count > 0 ) )
-            if self._show_pending: nonzero_tags.update( ( tag for ( tag, count ) in self._pending_tags_to_count.items() if count > 0 ) )
-            if self._show_petitioned: nonzero_tags.update( ( tag for ( tag, count ) in self._petitioned_tags_to_count.items() if count > 0 ) )
+            if self._show_current: nonzero_tags.update( ( tag for ( tag, count ) in list(self._current_tags_to_count.items()) if count > 0 ) )
+            if self._show_deleted: nonzero_tags.update( ( tag for ( tag, count ) in list(self._deleted_tags_to_count.items()) if count > 0 ) )
+            if self._show_pending: nonzero_tags.update( ( tag for ( tag, count ) in list(self._pending_tags_to_count.items()) if count > 0 ) )
+            if self._show_petitioned: nonzero_tags.update( ( tag for ( tag, count ) in list(self._petitioned_tags_to_count.items()) if count > 0 ) )
             
             for tag in nonzero_tags:
                 
@@ -2746,10 +2929,10 @@ class ListBoxTagsSelection( ListBoxTags ):
             
             nonzero_tags = set()
             
-            if self._show_current: nonzero_tags.update( ( tag for ( tag, count ) in self._current_tags_to_count.items() if count > 0 and tag in limit_to_these_tags ) )
-            if self._show_deleted: nonzero_tags.update( ( tag for ( tag, count ) in self._deleted_tags_to_count.items() if count > 0 and tag in limit_to_these_tags ) )
-            if self._show_pending: nonzero_tags.update( ( tag for ( tag, count ) in self._pending_tags_to_count.items() if count > 0 and tag in limit_to_these_tags ) )
-            if self._show_petitioned: nonzero_tags.update( ( tag for ( tag, count ) in self._petitioned_tags_to_count.items() if count > 0 and tag in limit_to_these_tags ) )
+            if self._show_current: nonzero_tags.update( ( tag for ( tag, count ) in list(self._current_tags_to_count.items()) if count > 0 and tag in limit_to_these_tags ) )
+            if self._show_deleted: nonzero_tags.update( ( tag for ( tag, count ) in list(self._deleted_tags_to_count.items()) if count > 0 and tag in limit_to_these_tags ) )
+            if self._show_pending: nonzero_tags.update( ( tag for ( tag, count ) in list(self._pending_tags_to_count.items()) if count > 0 and tag in limit_to_these_tags ) )
+            if self._show_petitioned: nonzero_tags.update( ( tag for ( tag, count ) in list(self._petitioned_tags_to_count.items()) if count > 0 and tag in limit_to_these_tags ) )
             
             for tag in nonzero_tags:
                 
@@ -2820,10 +3003,10 @@ class ListBoxTagsSelection( ListBoxTags ):
         
         tags_changed = set()
         
-        if self._show_current: tags_changed.update( current_tags_to_count.keys() )
-        if self._show_deleted: tags_changed.update( deleted_tags_to_count.keys() )
-        if self._show_pending: tags_changed.update( pending_tags_to_count.keys() )
-        if self._show_petitioned: tags_changed.update( petitioned_tags_to_count.keys() )
+        if self._show_current: tags_changed.update( list(current_tags_to_count.keys()) )
+        if self._show_deleted: tags_changed.update( list(deleted_tags_to_count.keys()) )
+        if self._show_pending: tags_changed.update( list(pending_tags_to_count.keys()) )
+        if self._show_petitioned: tags_changed.update( list(petitioned_tags_to_count.keys()) )
         
         if len( tags_changed ) > 0:
             
@@ -2837,7 +3020,7 @@ class ListBoxTagsSelection( ListBoxTags ):
         
         media = set( media )
         
-        if len( media ) < len( self._last_media ) / 10: # if we are dropping to a much smaller selection (e.g. 5000 -> 1), we should just recalculate from scratch
+        if len( media ) < len( self._last_media ) // 10: # if we are dropping to a much smaller selection (e.g. 5000 -> 1), we should just recalculate from scratch
             
             force_reload = True
             
@@ -2874,7 +3057,7 @@ class ListBoxTagsSelection( ListBoxTags ):
             
             for counter in ( self._current_tags_to_count, self._deleted_tags_to_count, self._pending_tags_to_count, self._petitioned_tags_to_count ):
                 
-                tags = counter.keys()
+                tags = list(counter.keys())
                 
                 for tag in tags:
                     
@@ -2889,10 +3072,10 @@ class ListBoxTagsSelection( ListBoxTags ):
                 
                 tags_changed = set()
                 
-                if self._show_current: tags_changed.update( current_tags_to_count.keys() )
-                if self._show_deleted: tags_changed.update( deleted_tags_to_count.keys() )
-                if self._show_pending: tags_changed.update( pending_tags_to_count.keys() )
-                if self._show_petitioned: tags_changed.update( petitioned_tags_to_count.keys() )
+                if self._show_current: tags_changed.update( list(current_tags_to_count.keys()) )
+                if self._show_deleted: tags_changed.update( list(deleted_tags_to_count.keys()) )
+                if self._show_pending: tags_changed.update( list(pending_tags_to_count.keys()) )
+                if self._show_petitioned: tags_changed.update( list(petitioned_tags_to_count.keys()) )
                 
                 if len( tags_changed ) > 0:
                     
@@ -2910,7 +3093,7 @@ class ListBoxTagsSelection( ListBoxTags ):
         self._DataHasChanged()
         
     
-    def SiblingsHaveChanged( self ):
+    def ForceTagRecalc( self ):
         
         self.SetTagsByMedia( self._last_media, force_reload = True )
         
@@ -3003,11 +3186,11 @@ class ListBoxTagsSelectionTagsDialog( ListBoxTagsSelection ):
     
     render_for_user = False
     
-    def __init__( self, parent, add_func, delete_func ):
+    def __init__( self, parent, enter_func, delete_func ):
         
         ListBoxTagsSelection.__init__( self, parent, include_counts = True, collapse_siblings = False )
         
-        self._add_func = add_func
+        self._enter_func = enter_func
         self._delete_func = delete_func
         
     
@@ -3015,7 +3198,7 @@ class ListBoxTagsSelectionTagsDialog( ListBoxTagsSelection ):
         
         if len( self._selected_terms ) > 0:
             
-            self._add_func( set( self._selected_terms ) )
+            self._enter_func( set( self._selected_terms ) )
             
         
     

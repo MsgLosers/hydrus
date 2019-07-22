@@ -1,23 +1,25 @@
-import ClientImporting
-import ClientImportOptions
-import ClientImportFileSeeds
-import ClientPaths
-import ClientThreading
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusNATPunch
-import HydrusPaths
-import HydrusSerialisable
-import HydrusThreading
-import ClientConstants as CC
+from . import ClientImporting
+from . import ClientImportOptions
+from . import ClientImportFileSeeds
+from . import ClientPaths
+from . import ClientThreading
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusNATPunch
+from . import HydrusPaths
+from . import HydrusSerialisable
+from . import HydrusThreading
+from . import ClientConstants as CC
 import random
 import threading
 import time
 import wx
 
-def DAEMONCheckExportFolders( controller ):
+def DAEMONCheckExportFolders():
+    
+    controller = HG.client_controller
     
     if not controller.options[ 'pause_export_folders_sync' ]:
         
@@ -45,7 +47,9 @@ def DAEMONCheckExportFolders( controller ):
             
         
     
-def DAEMONCheckImportFolders( controller ):
+def DAEMONCheckImportFolders():
+    
+    controller = HG.client_controller
     
     if not controller.options[ 'pause_import_folders_sync' ]:
         
@@ -123,7 +127,7 @@ def DAEMONDownloadFiles( controller ):
                         
                         try:
                             
-                            ( os_file_handle, temp_path ) = ClientPaths.GetTempPath()
+                            ( os_file_handle, temp_path ) = HydrusPaths.GetTempPath()
                             
                             try:
                                 
@@ -150,7 +154,7 @@ def DAEMONDownloadFiles( controller ):
                                 
                                 file_import_job = ClientImportFileSeeds.FileImportJob( temp_path, file_import_options )
                                 
-                                client_files_manager.ImportFile( file_import_job )
+                                file_import_job.DoWork()
                                 
                                 successful_hashes.add( hash )
                                 
@@ -189,7 +193,7 @@ def DAEMONDownloadFiles( controller ):
                         multihash = multihashes[0]
                         
                         # this actually calls to a thread that can launch gui 'select from tree' stuff, so let's just break at this point
-                        service.ImportFile( multihash )
+                        wx.CallAfter( service.ImportFile, multihash )
                         
                         break
                         
@@ -273,24 +277,6 @@ def DAEMONMaintainTrash( controller ):
             
         
     
-def DAEMONSaveDirtyObjects( controller ):
-    
-    controller.SaveDirtyObjects()
-    
-def DAEMONSynchroniseAccounts( controller ):
-    
-    services = controller.services_manager.GetServices( HC.RESTRICTED_SERVICES )
-    
-    for service in services:
-        
-        if HydrusThreading.IsThreadShuttingDown():
-            
-            return
-            
-        
-        service.SyncAccount()
-        
-    
 def DAEMONSynchroniseRepositories( controller ):
     
     if not controller.options[ 'pause_repo_sync' ]:
@@ -309,7 +295,7 @@ def DAEMONSynchroniseRepositories( controller ):
                 return
                 
             
-            service.Sync( only_process_when_idle = True )
+            service.Sync( maintenance_mode = HC.MAINTENANCE_IDLE )
             
             if HydrusThreading.IsThreadShuttingDown():
                 
@@ -475,74 +461,5 @@ def DAEMONSynchroniseSubscriptions( controller ):
     finally:
         
         HG.subscriptions_running = False
-        
-    
-def DAEMONUPnP( controller ):
-    
-    try:
-        
-        local_ip = HydrusNATPunch.GetLocalIP()
-        
-        current_mappings = HydrusNATPunch.GetUPnPMappings()
-        
-        our_mappings = { ( internal_client, internal_port ) : external_port for ( description, internal_client, internal_port, external_ip_address, external_port, protocol, enabled ) in current_mappings }
-        
-    except:
-        
-        return # This IGD probably doesn't support UPnP, so don't spam the user with errors they can't fix!
-        
-    
-    services = controller.services_manager.GetServices( ( HC.LOCAL_BOORU, ) )
-    
-    for service in services:
-        
-        internal_port = service.GetPort()
-        
-        if ( local_ip, internal_port ) in our_mappings:
-            
-            current_external_port = our_mappings[ ( local_ip, internal_port ) ]
-            
-            upnp_port = service.GetUPnPPort()
-            
-            if upnp_port is None or current_external_port != upnp_port:
-                
-                HydrusNATPunch.RemoveUPnPMapping( current_external_port, 'TCP' )
-                
-            
-        
-    
-    for service in services:
-        
-        internal_port = service.GetPort()
-        upnp_port = service.GetUPnPPort()
-        
-        if upnp_port is not None:
-            
-            if ( local_ip, internal_port ) not in our_mappings:
-                
-                service_type = service.GetServiceType()
-                
-                protocol = 'TCP'
-                
-                description = HC.service_string_lookup[ service_type ] + ' at ' + local_ip + ':' + str( internal_port )
-                
-                duration = 3600
-                
-                try:
-                    
-                    HydrusNATPunch.AddUPnPMapping( local_ip, internal_port, upnp_port, protocol, description, duration = duration )
-                    
-                except HydrusExceptions.FirewallException:
-                    
-                    HydrusData.Print( 'The UPnP Daemon tried to add ' + local_ip + ':' + internal_port + '->external:' + upnp_port + ' but it failed due to router error. Please try it manually to get a full log of what happened.' )
-                    
-                    return
-                    
-                except:
-                    
-                    raise
-                    
-                
-            
         
     

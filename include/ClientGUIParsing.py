@@ -1,32 +1,33 @@
 import bs4
-import ClientConstants as CC
-import ClientData
-import ClientDefaults
-import ClientGUICommon
-import ClientGUIDialogs
-import ClientGUIDialogsQuick
-import ClientGUIMenus
-import ClientGUIControls
-import ClientGUIListBoxes
-import ClientGUIListCtrl
-import ClientGUIScrolledPanels
-import ClientGUIScrolledPanelsEdit
-import ClientGUISerialisable
-import ClientGUITopLevelWindows
-import ClientNetworkingContexts
-import ClientNetworkingDomain
-import ClientNetworkingJobs
-import ClientParsing
-import ClientPaths
-import ClientSerialisable
-import ClientThreading
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
-import HydrusTags
-import HydrusText
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientDefaults
+from . import ClientGUICommon
+from . import ClientGUIDialogs
+from . import ClientGUIDialogsQuick
+from . import ClientGUIMenus
+from . import ClientGUIControls
+from . import ClientGUIFunctions
+from . import ClientGUIListBoxes
+from . import ClientGUIListCtrl
+from . import ClientGUIScrolledPanels
+from . import ClientGUIScrolledPanelsEdit
+from . import ClientGUISerialisable
+from . import ClientGUITopLevelWindows
+from . import ClientNetworkingContexts
+from . import ClientNetworkingDomain
+from . import ClientNetworkingJobs
+from . import ClientParsing
+from . import ClientPaths
+from . import ClientSerialisable
+from . import ClientThreading
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
+from . import HydrusTags
+from . import HydrusText
 import itertools
 import json
 import os
@@ -58,15 +59,16 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         columns = [ ( 'name', -1 ), ( 'type', 40 ) ]
         
-        self._listctrl = ClientGUIListCtrl.BetterListCtrl( listctrl_panel, 'dowloader_export', 14, 36, columns, self._ConvertContentToListCtrlTuples, use_simple_delete = True )
+        self._listctrl = ClientGUIListCtrl.BetterListCtrl( listctrl_panel, 'downloader_export', 14, 36, columns, self._ConvertContentToListCtrlTuples, use_simple_delete = True )
         
         self._listctrl.Sort( 1 )
         
         listctrl_panel.SetListCtrl( self._listctrl )
         
         listctrl_panel.AddButton( 'add gug', self._AddGUG )
-        listctrl_panel.AddButton( 'add url class', self._AddURLMatch )
+        listctrl_panel.AddButton( 'add url class', self._AddURLClass )
         listctrl_panel.AddButton( 'add parser', self._AddParser )
+        listctrl_panel.AddButton( 'add login script', self._AddLoginScript )
         listctrl_panel.AddButton( 'add headers/bandwidth rules', self._AddDomainMetadata )
         listctrl_panel.AddDeleteButton()
         listctrl_panel.AddSeparator()
@@ -112,15 +114,9 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def _AddGUG( self ):
         
-        choosable_gugs = [ gug for gug in self._network_engine.domain_manager.GetGUGs() if gug.IsFunctional() ]
+        existing_data = self._listctrl.GetData()
         
-        for obj in self._listctrl.GetData():
-            
-            if obj in choosable_gugs:
-                
-                choosable_gugs.remove( obj )
-                
-            
+        choosable_gugs = [ gug for gug in self._network_engine.domain_manager.GetGUGs() if gug.IsFunctional() and gug not in existing_data ]
         
         choice_tuples = [ ( gug.GetName(), gug, False ) for gug in choosable_gugs ]
         
@@ -140,33 +136,56 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
                 
             
         
+        gugs_to_include = self._FleshOutNGUGsWithGUGs( gugs_to_include )
+        
         domains = { ClientNetworkingDomain.ConvertURLIntoDomain( example_url ) for example_url in itertools.chain.from_iterable( ( gug.GetExampleURLs() for gug in gugs_to_include ) ) }
         
         domain_metadatas_to_include = self._GetDomainMetadatasToInclude( domains )
         
-        url_matches_to_include = self._GetURLMatchesToInclude( gugs_to_include )
+        url_classes_to_include = self._GetURLClassesToInclude( gugs_to_include )
         
-        url_matches_to_include = self._FleshOutURLMatchesWithAPILinks( url_matches_to_include )
+        url_classes_to_include = self._FleshOutURLClassesWithAPILinks( url_classes_to_include )
         
-        parsers_to_include = self._GetParsersToInclude( url_matches_to_include )
+        parsers_to_include = self._GetParsersToInclude( url_classes_to_include )
         
         self._listctrl.AddDatas( domain_metadatas_to_include )
         self._listctrl.AddDatas( gugs_to_include )
-        self._listctrl.AddDatas( url_matches_to_include )
+        self._listctrl.AddDatas( url_classes_to_include )
         self._listctrl.AddDatas( parsers_to_include )
+        
+    
+    def _AddLoginScript( self ):
+        
+        existing_data = self._listctrl.GetData()
+        
+        choosable_login_scripts = [ ls for ls in self._network_engine.login_manager.GetLoginScripts() if ls not in existing_data ]
+        
+        choice_tuples = [ ( login_script.GetName(), login_script, False ) for login_script in choosable_login_scripts ]
+        
+        with ClientGUITopLevelWindows.DialogEdit( self, 'select login scripts' ) as dlg:
+            
+            panel = ClientGUIScrolledPanelsEdit.EditChooseMultiple( dlg, choice_tuples )
+            
+            dlg.SetPanel( panel )
+            
+            if dlg.ShowModal() == wx.ID_OK:
+                
+                login_scripts_to_include = panel.GetValue()
+                
+            else:
+                
+                return
+                
+            
+        
+        self._listctrl.AddDatas( login_scripts_to_include )
         
     
     def _AddParser( self ):
         
-        choosable_parsers = list( self._network_engine.domain_manager.GetParsers() )
+        existing_data = self._listctrl.GetData()
         
-        for obj in self._listctrl.GetData():
-            
-            if obj in choosable_parsers:
-                
-                choosable_parsers.remove( obj )
-                
-            
+        choosable_parsers = [ p for p in self._network_engine.domain_manager.GetParsers() if p not in existing_data ]
         
         choice_tuples = [ ( parser.GetName(), parser, False ) for parser in choosable_parsers ]
         
@@ -189,19 +208,13 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         self._listctrl.AddDatas( parsers_to_include )
         
     
-    def _AddURLMatch( self ):
+    def _AddURLClass( self ):
         
-        choosable_url_matches = list( self._network_engine.domain_manager.GetURLMatches() )
+        existing_data = self._listctrl.GetData()
         
-        for obj in self._listctrl.GetData():
-            
-            if obj in choosable_url_matches:
-                
-                choosable_url_matches.remove( obj )
-                
-            
+        choosable_url_classes = [ u for u in self._network_engine.domain_manager.GetURLClasses() if u not in existing_data ]
         
-        choice_tuples = [ ( url_match.GetName(), url_match, False ) for url_match in choosable_url_matches ]
+        choice_tuples = [ ( url_class.GetName(), url_class, False ) for url_class in choosable_url_classes ]
         
         with ClientGUITopLevelWindows.DialogEdit( self, 'select url classes' ) as dlg:
             
@@ -211,7 +224,7 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             if dlg.ShowModal() == wx.ID_OK:
                 
-                url_matches_to_include = panel.GetValue()
+                url_classes_to_include = panel.GetValue()
                 
             else:
                 
@@ -219,11 +232,11 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
                 
             
         
-        url_matches_to_include = self._FleshOutURLMatchesWithAPILinks( url_matches_to_include )
+        url_classes_to_include = self._FleshOutURLClassesWithAPILinks( url_classes_to_include )
         
-        parsers_to_include = self._GetParsersToInclude( url_matches_to_include )
+        parsers_to_include = self._GetParsersToInclude( url_classes_to_include )
         
-        self._listctrl.AddDatas( url_matches_to_include )
+        self._listctrl.AddDatas( url_classes_to_include )
         self._listctrl.AddDatas( parsers_to_include )
         
     
@@ -318,27 +331,55 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
         
     
-    def _FleshOutURLMatchesWithAPILinks( self, url_matches ):
+    def _FleshOutNGUGsWithGUGs( self, gugs ):
         
-        url_matches_to_include = set( url_matches )
+        gugs_to_include = set( gugs )
         
-        api_links_dict = dict( ClientNetworkingDomain.ConvertURLMatchesIntoAPIPairs( self._network_engine.domain_manager.GetURLMatches() ) )
+        existing_data = self._listctrl.GetData()
         
-        for url_match in url_matches:
+        possible_new_gugs = [ gug for gug in self._network_engine.domain_manager.GetGUGs() if gug.IsFunctional() and gug not in existing_data and gug not in gugs_to_include ]
+        
+        interesting_gug_keys_and_names = list( itertools.chain.from_iterable( [ gug.GetGUGKeysAndNames() for gug in gugs_to_include if isinstance( gug, ClientNetworkingDomain.NestedGalleryURLGenerator ) ] ) )
+        
+        interesting_gugs = [ gug for gug in possible_new_gugs if gug.GetGUGKeyAndName() in interesting_gug_keys_and_names ]
+        
+        gugs_to_include.update( interesting_gugs )
+        
+        if True in ( isinstance( gug, ClientNetworkingDomain.NestedGalleryURLGenerator ) for gug in interesting_gugs ):
+            
+            return self._FleshOutNGUGsWithGUGs( gugs_to_include )
+            
+        else:
+            
+            return gugs_to_include
+            
+        
+    
+    def _FleshOutURLClassesWithAPILinks( self, url_classes ):
+        
+        url_classes_to_include = set( url_classes )
+        
+        api_links_dict = dict( ClientNetworkingDomain.ConvertURLClassesIntoAPIPairs( self._network_engine.domain_manager.GetURLClasses() ) )
+        
+        for url_class in url_classes:
             
             added_this_cycle = set()
             
-            while url_match in api_links_dict and url_match not in added_this_cycle:
+            while url_class in api_links_dict and url_class not in added_this_cycle:
                 
-                added_this_cycle.add( url_match )
+                added_this_cycle.add( url_class )
                 
-                url_match = api_links_dict[ url_match ]
+                url_class = api_links_dict[ url_class ]
                 
-                url_matches_to_include.add( url_match )
+                url_classes_to_include.add( url_class )
                 
             
         
-        return list( url_matches_to_include )
+        existing_data = self._listctrl.GetData()
+        
+        url_classes_to_include = [ u for u in url_classes_to_include if u not in existing_data ]
+        
+        return url_classes_to_include
         
     
     def _GetDomainMetadatasToInclude( self, domains ):
@@ -393,13 +434,13 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         return domain_metadatas
         
     
-    def _GetParsersToInclude( self, url_matches ):
+    def _GetParsersToInclude( self, url_classes ):
         
         parsers_to_include = set()
         
-        for url_match in url_matches:
+        for url_class in url_classes:
             
-            example_url = url_match.GetExampleURL()
+            example_url = url_class.GetExampleURL()
             
             ( url_type, match_name, can_parse ) = self._network_engine.domain_manager.GetURLParseCapability( example_url )
             
@@ -418,12 +459,14 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
                 
             
         
-        return list( parsers_to_include )
+        existing_data = self._listctrl.GetData()
+        
+        return [ p for p in parsers_to_include if p not in existing_data ]
         
     
-    def _GetURLMatchesToInclude( self, gugs ):
+    def _GetURLClassesToInclude( self, gugs ):
         
-        url_matches_to_include = set()
+        url_classes_to_include = set()
         
         for gug in gugs:
             
@@ -438,28 +481,30 @@ class DownloaderExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
             
             for example_url in example_urls:
                 
-                url_match = self._network_engine.domain_manager.GetURLMatch( example_url )
+                url_class = self._network_engine.domain_manager.GetURLClass( example_url )
                 
-                if url_match is not None:
+                if url_class is not None:
                     
-                    url_matches_to_include.add( url_match )
+                    url_classes_to_include.add( url_class )
                     
                     # add post url matches from same domain
                     
                     domain = ClientNetworkingDomain.ConvertURLIntoSecondLevelDomain( example_url )
                     
-                    for um in list( self._network_engine.domain_manager.GetURLMatches() ):
+                    for um in list( self._network_engine.domain_manager.GetURLClasses() ):
                         
                         if ClientNetworkingDomain.ConvertURLIntoSecondLevelDomain( um.GetExampleURL() ) == domain and um.GetURLType() in ( HC.URL_TYPE_POST, HC.URL_TYPE_FILE ):
                             
-                            url_matches_to_include.add( um )
+                            url_classes_to_include.add( um )
                             
                         
                     
                 
             
         
-        return list( url_matches_to_include )
+        existing_data = self._listctrl.GetData()
+        
+        return [ u for u in url_classes_to_include if u not in existing_data ]
         
     
 class EditCompoundFormulaPanel( ClientGUIScrolledPanels.EditPanel ):
@@ -493,11 +538,11 @@ class EditCompoundFormulaPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._edit_formula = ClientGUICommon.BetterButton( edit_panel, 'edit', self.Edit )
         
-        self._move_formula_up = ClientGUICommon.BetterButton( edit_panel, u'\u2191', self.MoveUp )
+        self._move_formula_up = ClientGUICommon.BetterButton( edit_panel, '\u2191', self.MoveUp )
         
         self._delete_formula = ClientGUICommon.BetterButton( edit_panel, 'X', self.Delete )
         
-        self._move_formula_down = ClientGUICommon.BetterButton( edit_panel, u'\u2193', self.MoveDown )
+        self._move_formula_down = ClientGUICommon.BetterButton( edit_panel, '\u2193', self.MoveDown )
         
         self._sub_phrase = wx.TextCtrl( edit_panel )
         
@@ -797,7 +842,7 @@ class EditFormulaPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._formula_description = ClientGUICommon.SaneMultilineTextCtrl( my_panel )
         
-        ( width, height ) = ClientGUICommon.ConvertTextToPixels( self._formula_description, ( 90, 8 ) )
+        ( width, height ) = ClientGUIFunctions.ConvertTextToPixels( self._formula_description, ( 90, 8 ) )
         
         self._formula_description.SetInitialSize( ( width, height ) )
         
@@ -1181,11 +1226,11 @@ class EditHTMLFormulaPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._edit_rule = ClientGUICommon.BetterButton( edit_panel, 'edit', self.Edit )
         
-        self._move_rule_up = ClientGUICommon.BetterButton( edit_panel, u'\u2191', self.MoveUp )
+        self._move_rule_up = ClientGUICommon.BetterButton( edit_panel, '\u2191', self.MoveUp )
         
         self._delete_rule = ClientGUICommon.BetterButton( edit_panel, 'X', self.Delete )
         
-        self._move_rule_down = ClientGUICommon.BetterButton( edit_panel, u'\u2193', self.MoveDown )
+        self._move_rule_down = ClientGUICommon.BetterButton( edit_panel, '\u2193', self.MoveDown )
         
         self._content_to_fetch = ClientGUICommon.BetterChoice( edit_panel )
         
@@ -1460,7 +1505,7 @@ class EditJSONParsingRulePanel( ClientGUIScrolledPanels.EditPanel ):
         
         vbox.Add( self._parse_rule_type, CC.FLAGS_EXPAND_PERPENDICULAR )
         vbox.Add( self._string_match, CC.FLAGS_EXPAND_PERPENDICULAR )
-        vbox.Add( gridbox, CC.FLAGS_EXPAND_PERPENDICULAR )
+        vbox.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         
         self.SetSizer( vbox )
         
@@ -1542,11 +1587,11 @@ class EditJSONFormulaPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._edit_rule = ClientGUICommon.BetterButton( edit_panel, 'edit', self.Edit )
         
-        self._move_rule_up = ClientGUICommon.BetterButton( edit_panel, u'\u2191', self.MoveUp )
+        self._move_rule_up = ClientGUICommon.BetterButton( edit_panel, '\u2191', self.MoveUp )
         
         self._delete_rule = ClientGUICommon.BetterButton( edit_panel, 'X', self.Delete )
         
-        self._move_rule_down = ClientGUICommon.BetterButton( edit_panel, u'\u2193', self.MoveDown )
+        self._move_rule_down = ClientGUICommon.BetterButton( edit_panel, '\u2193', self.MoveDown )
         
         self._content_to_fetch = ClientGUICommon.BetterChoice( edit_panel )
         
@@ -2555,7 +2600,16 @@ class EditNodes( wx.Panel ):
     
     def Paste( self ):
         
-        raw_text = HG.client_controller.GetClipboardText()
+        try:
+            
+            raw_text = HG.client_controller.GetClipboardText()
+            
+        except HydrusExceptions.DataMissing as e:
+            
+            wx.MessageBox( str( e ) )
+            
+            return
+            
         
         try:
             
@@ -2733,16 +2787,9 @@ The formula should attempt to parse full or relative urls. If the url is relativ
             raise
             
         
-        example_data = network_job.GetContent()
+        example_text = network_job.GetContentText()
         
-        try:
-            
-            self._example_data.SetValue( example_data )
-            
-        except UnicodeDecodeError:
-            
-            self._example_data.SetValue( 'The fetched data, which had length ' + HydrusData.ConvertIntToBytes( len( example_data ) ) + ', did not appear to be displayable text.' )
-            
+        self._example_data.SetValue( example_text )
         
     
     def EventTestParse( self, event ):
@@ -2843,6 +2890,14 @@ class EditPageParserPanel( ClientGUIScrolledPanels.EditPanel ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
+        if test_context is None:
+            
+            example_parsing_context = parser.GetExampleParsingContext()
+            example_data = ''
+            
+            test_context = ( example_parsing_context, example_data )
+            
+        
         #
         
         menu_items = []
@@ -2881,13 +2936,15 @@ class EditPageParserPanel( ClientGUIScrolledPanels.EditPanel ):
         
         example_urls_panel = ClientGUICommon.StaticBox( main_panel, 'example urls' )
         
-        self._example_urls = ClientGUIListBoxes.AddEditDeleteListBox( example_urls_panel, 6, HydrusData.ToUnicode, self._AddExampleURL, self._EditExampleURL )
+        self._example_urls = ClientGUIListBoxes.AddEditDeleteListBox( example_urls_panel, 6, str, self._AddExampleURL, self._EditExampleURL )
         
         #
         
         formula_panel = wx.Panel( edit_notebook )
         
-        self._formula = EditFormulaPanel( formula_panel, formula, self.GetTestContext )
+        formula_test_callable = lambda: test_context
+        
+        self._formula = EditFormulaPanel( formula_panel, formula, formula_test_callable )
         
         #
         
@@ -2934,14 +2991,6 @@ class EditPageParserPanel( ClientGUIScrolledPanels.EditPanel ):
         self._test_referral_url = wx.TextCtrl( test_url_fetch_panel )
         self._fetch_example_data = ClientGUICommon.BetterButton( test_url_fetch_panel, 'fetch test data from url', self._FetchExampleData )
         self._test_network_job_control = ClientGUIControls.NetworkJobControl( test_url_fetch_panel )
-        
-        if test_context is None:
-            
-            example_parsing_context = parser.GetExampleParsingContext()
-            example_data = ''
-            
-            test_context = ( example_parsing_context, example_data )
-            
         
         if formula is None:
             
@@ -3033,7 +3082,7 @@ class EditPageParserPanel( ClientGUIScrolledPanels.EditPanel ):
         
         gridbox = ClientGUICommon.WrapInGrid( test_url_fetch_panel, rows )
         
-        test_url_fetch_panel.Add( gridbox, CC.FLAGS_EXPAND_PERPENDICULAR )
+        test_url_fetch_panel.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         test_url_fetch_panel.Add( self._fetch_example_data, CC.FLAGS_EXPAND_PERPENDICULAR )
         test_url_fetch_panel.Add( self._test_network_job_control, CC.FLAGS_EXPAND_PERPENDICULAR )
         
@@ -3197,6 +3246,12 @@ class EditPageParserPanel( ClientGUIScrolledPanels.EditPanel ):
                     return
                     
                 
+                example_parsing_context = self._test_panel.GetExampleParsingContext()
+                
+                example_parsing_context[ 'url' ] = url
+                
+                self._test_panel.SetExampleParsingContext( example_parsing_context )
+                
                 self._test_panel.SetExampleData( example_data )
                 
                 self._test_network_job_control.ClearNetworkJob()
@@ -3206,7 +3261,7 @@ class EditPageParserPanel( ClientGUIScrolledPanels.EditPanel ):
                 
                 network_job.WaitUntilDone()
                 
-                example_data = network_job.GetContent()
+                example_data = network_job.GetContentText()
                 
             except HydrusExceptions.CancelledException:
                 
@@ -3214,7 +3269,7 @@ class EditPageParserPanel( ClientGUIScrolledPanels.EditPanel ):
                 
             except Exception as e:
                 
-                example_data = 'fetch failed:' + os.linesep * 2 + HydrusData.ToUnicode( e )
+                example_data = 'fetch failed:' + os.linesep * 2 + str( e )
                 
                 HydrusData.ShowException( e )
                 
@@ -3346,15 +3401,15 @@ class EditParsersPanel( ClientGUIScrolledPanels.EditPanel ):
         
         produces = list( parser.GetParsableContent() )
         
-        produces.sort()
+        pretty_produces = ClientParsing.ConvertParsableContentToPrettyString( produces )
+        
+        sort_produces = pretty_produces
         
         pretty_name = name
         pretty_example_urls = ', '.join( example_urls )
         
-        pretty_produces = ClientParsing.ConvertParsableContentToPrettyString( produces )
-        
         display_tuple = ( pretty_name, pretty_example_urls, pretty_produces )
-        sort_tuple = ( name, example_urls, produces )
+        sort_tuple = ( name, example_urls, sort_produces )
         
         return ( display_tuple, sort_tuple )
         
@@ -3603,7 +3658,7 @@ And pass that html to a number of 'parsing children' that will each look through
             
         else:
             
-            file_identifier = test_arg.decode( 'hex' )
+            file_identifier = bytes.fromhex( test_arg )
             
         
         try:
@@ -3614,15 +3669,15 @@ And pass that html to a number of 'parsing children' that will each look through
             
             self._test_script_management.SetJobKey( job_key )
             
-            example_data = script.FetchData( job_key, file_identifier )
+            parsing_text = script.FetchParsingText( job_key, file_identifier )
             
             try:
                 
-                self._example_data.SetValue( example_data )
+                self._example_data.SetValue( parsing_text )
                 
             except UnicodeDecodeError:
                 
-                self._example_data.SetValue( 'The fetched data, which had length ' + HydrusData.ConvertIntToBytes( len( example_data ) ) + ', did not appear to be displayable text.' )
+                self._example_data.SetValue( 'The fetched data, which had length ' + HydrusData.ToHumanBytes( len( parsing_text ) ) + ', did not appear to be displayable text.' )
                 
             
         except Exception as e:
@@ -3631,7 +3686,7 @@ And pass that html to a number of 'parsing children' that will each look through
             
             message = 'Could not fetch data!'
             message += os.linesep * 2
-            message += HydrusData.ToUnicode( e )
+            message += str( e )
             
             wx.MessageBox( message )
             
@@ -3998,7 +4053,16 @@ class ManageParsingScriptsPanel( ClientGUIScrolledPanels.ManagePanel ):
     
     def ImportFromClipboard( self ):
         
-        raw_text = HG.client_controller.GetClipboardText()
+        try:
+            
+            raw_text = HG.client_controller.GetClipboardText()
+            
+        except HydrusExceptions.DataMissing as e:
+            
+            wx.MessageBox( str( e ) )
+            
+            return
+            
         
         try:
             
@@ -4018,7 +4082,7 @@ class ManageParsingScriptsPanel( ClientGUIScrolledPanels.ManagePanel ):
             
             if dlg.ShowModal() == wx.ID_OK:
                 
-                path = HydrusData.ToUnicode( dlg.GetPath() )
+                path = dlg.GetPath()
                 
                 try:
                     
@@ -4026,14 +4090,14 @@ class ManageParsingScriptsPanel( ClientGUIScrolledPanels.ManagePanel ):
                     
                 except Exception as e:
                     
-                    wx.MessageBox( HydrusData.ToUnicode( e ) )
+                    wx.MessageBox( str( e ) )
                     
                     return
                     
                 
                 try:
                     
-                    obj = HydrusSerialisable.CreateFromNetworkString( payload )
+                    obj = HydrusSerialisable.CreateFromNetworkBytes( payload )
                     
                     self._ImportObject( obj )
                     
@@ -4059,15 +4123,13 @@ class ScriptManagementControl( wx.Panel ):
         
         main_panel = ClientGUICommon.StaticBox( self, 'script control' )
         
-        self._status = wx.StaticText( main_panel )
+        self._status = ClientGUICommon.BetterStaticText( main_panel )
         self._gauge = ClientGUICommon.Gauge( main_panel )
         
-        self._link_button = wx.BitmapButton( main_panel, bitmap = CC.GlobalBMPs.link )
-        self._link_button.Bind( wx.EVT_BUTTON, self.EventLinkButton )
+        self._link_button = ClientGUICommon.BetterBitmapButton( main_panel, CC.GlobalBMPs.link, self.LinkButton )
         self._link_button.SetToolTip( 'urls found by the script' )
         
-        self._cancel_button = wx.BitmapButton( main_panel, bitmap = CC.GlobalBMPs.stop )
-        self._cancel_button.Bind( wx.EVT_BUTTON, self.EventCancelButton )
+        self._cancel_button = ClientGUICommon.BetterBitmapButton( main_panel, CC.GlobalBMPs.stop, self.CancelButton )
         
         #
         
@@ -4120,10 +4182,7 @@ class ScriptManagementControl( wx.Panel ):
                 status = ''
                 
             
-            if status != self._status.GetLabelText():
-                
-                self._status.SetLabelText( status )
-                
+            self._status.SetLabelText( status )
             
             if self._job_key.HasVariable( 'script_gauge' ):
                 
@@ -4184,7 +4243,7 @@ class ScriptManagementControl( wx.Panel ):
             
         
     
-    def EventCancelButton( self, event ):
+    def CancelButton( self ):
         
         with self._lock:
             
@@ -4195,7 +4254,7 @@ class ScriptManagementControl( wx.Panel ):
             
         
     
-    def EventLinkButton( self, event ):
+    def LinkButton( self ):
         
         with self._lock:
             
@@ -4262,7 +4321,7 @@ class TestPanel( wx.Panel ):
         
         self._example_data_raw_preview = ClientGUICommon.SaneMultilineTextCtrl( raw_data_panel, style = wx.TE_READONLY )
         
-        size = ClientGUICommon.ConvertTextToPixels( self._example_data_raw_preview, ( 60, 9 ) )
+        size = ClientGUIFunctions.ConvertTextToPixels( self._example_data_raw_preview, ( 60, 9 ) )
         
         self._example_data_raw_preview.SetInitialSize( size )
         
@@ -4270,7 +4329,7 @@ class TestPanel( wx.Panel ):
         
         self._results = ClientGUICommon.SaneMultilineTextCtrl( self )
         
-        size = ClientGUICommon.ConvertTextToPixels( self._example_data_raw_preview, ( 80, 12 ) )
+        size = ClientGUIFunctions.ConvertTextToPixels( self._example_data_raw_preview, ( 80, 12 ) )
         
         self._results.SetInitialSize( size )
         
@@ -4330,6 +4389,12 @@ class TestPanel( wx.Panel ):
                 return
                 
             
+            example_parsing_context = self._example_parsing_context.GetValue()
+            
+            example_parsing_context[ 'url' ] = url
+            
+            self._example_parsing_context.SetValue( example_parsing_context )
+            
             self._SetExampleData( example_data )
             
         
@@ -4345,7 +4410,7 @@ class TestPanel( wx.Panel ):
                 
                 network_job.WaitUntilDone()
                 
-                example_data = network_job.GetContent()
+                example_data = network_job.GetContentText()
                 
             except HydrusExceptions.CancelledException:
                 
@@ -4353,7 +4418,7 @@ class TestPanel( wx.Panel ):
                 
             except Exception as e:
                 
-                example_data = 'fetch failed:' + os.linesep * 2 + HydrusData.ToUnicode( e )
+                example_data = 'fetch failed:' + os.linesep * 2 + str( e )
                 
                 HydrusData.ShowException( e )
                 
@@ -4376,7 +4441,16 @@ class TestPanel( wx.Panel ):
     
     def _Paste( self ):
         
-        raw_text = HG.client_controller.GetClipboardText()
+        try:
+            
+            raw_text = HG.client_controller.GetClipboardText()
+            
+        except HydrusExceptions.DataMissing as e:
+            
+            wx.MessageBox( str( e ) )
+            
+            return
+            
         
         self._SetExampleData( raw_text )
         
@@ -4401,11 +4475,11 @@ class TestPanel( wx.Panel ):
                 parse_phrase = 'looks like JSON'
                 
             
-            description = HydrusData.ConvertIntToBytes( len( example_data ) ) + ' total, ' + parse_phrase
+            description = HydrusData.ToHumanBytes( len( example_data ) ) + ' total, ' + parse_phrase
             
             if len( example_data ) > 1024:
                 
-                preview = 'PREVIEW:' + os.linesep + HydrusData.ToUnicode( example_data[:1024] )
+                preview = 'PREVIEW:' + os.linesep + str( example_data[:1024] )
                 
             else:
                 
@@ -4438,6 +4512,16 @@ class TestPanel( wx.Panel ):
         return ( example_parsing_context, self._example_data_raw )
         
     
+    def SetExampleData( self, example_data ):
+        
+        self._SetExampleData( example_data )
+        
+    
+    def SetExampleParsingContext( self, example_parsing_context ):
+        
+        self._example_parsing_context.SetValue( example_parsing_context )
+        
+    
     def TestParse( self ):
         
         obj = self._object_callable()
@@ -4454,21 +4538,14 @@ class TestPanel( wx.Panel ):
             
             etype = type( e )
             
-            value = HydrusData.ToUnicode( e )
-            
             ( etype, value, tb ) = sys.exc_info()
             
             trace = ''.join( traceback.format_exception( etype, value, tb ) )
             
-            message = 'Exception:' + os.linesep + HydrusData.ToUnicode( etype.__name__ ) + ': ' + HydrusData.ToUnicode( value ) + os.linesep + HydrusData.ToUnicode( trace )
+            message = 'Exception:' + os.linesep + str( etype.__name__ ) + ': ' + str( e ) + os.linesep + trace
             
             self._results.SetValue( message )
             
-        
-    
-    def SetExampleData( self, example_data ):
-        
-        self._SetExampleData( example_data )
         
     
 class TestPanelPageParser( TestPanel ):
@@ -4533,11 +4610,11 @@ class TestPanelPageParser( TestPanel ):
             
             try:
                 
-                post_conversion_example_data = pre_parsing_conversion.Convert( self._example_data_raw )
+                post_conversion_example_data = ClientParsing.MakeParsedTextPretty( pre_parsing_conversion.Convert( self._example_data_raw ) )
                 
                 if len( post_conversion_example_data ) > 1024:
                     
-                    preview = 'PREVIEW:' + os.linesep + HydrusData.ToUnicode( post_conversion_example_data[:1024] )
+                    preview = 'PREVIEW:' + os.linesep + str( post_conversion_example_data[:1024] )
                     
                 else:
                     
@@ -4558,7 +4635,7 @@ class TestPanelPageParser( TestPanel ):
                     parse_phrase = 'looks like JSON'
                     
                 
-                description = HydrusData.ConvertIntToBytes( len( post_conversion_example_data ) ) + ' total, ' + parse_phrase
+                description = HydrusData.ToHumanBytes( len( post_conversion_example_data ) ) + ' total, ' + parse_phrase
                 
             except Exception as e:
                 
@@ -4566,13 +4643,11 @@ class TestPanelPageParser( TestPanel ):
                 
                 etype = type( e )
                 
-                value = HydrusData.ToUnicode( e )
-                
                 ( etype, value, tb ) = sys.exc_info()
                 
                 trace = ''.join( traceback.format_exception( etype, value, tb ) )
                 
-                message = 'Exception:' + os.linesep + HydrusData.ToUnicode( etype.__name__ ) + ': ' + HydrusData.ToUnicode( value ) + os.linesep + HydrusData.ToUnicode( trace )
+                message = 'Exception:' + os.linesep + str( etype.__name__ ) + ': ' + str( e ) + os.linesep + trace
                 
                 preview = message
                 
@@ -4677,7 +4752,7 @@ class TestPanelPageParserSubsidiary( TestPanelPageParser ):
                 
                 if len( preview ) > 1024:
                     
-                    preview = 'PREVIEW:' + os.linesep + HydrusData.ToUnicode( preview[:1024] )
+                    preview = 'PREVIEW:' + os.linesep + str( preview[:1024] )
                     
                 
                 description = HydrusData.ToHumanInt( len( separation_example_data ) ) + ' subsidiary posts parsed'
@@ -4688,13 +4763,11 @@ class TestPanelPageParserSubsidiary( TestPanelPageParser ):
                 
                 etype = type( e )
                 
-                value = HydrusData.ToUnicode( e )
-                
                 ( etype, value, tb ) = sys.exc_info()
                 
                 trace = ''.join( traceback.format_exception( etype, value, tb ) )
                 
-                message = 'Exception:' + os.linesep + HydrusData.ToUnicode( etype.__name__ ) + ': ' + HydrusData.ToUnicode( value ) + os.linesep + HydrusData.ToUnicode( trace )
+                message = 'Exception:' + os.linesep + str( etype.__name__ ) + ': ' + str( e ) + os.linesep + trace
                 
                 preview = message
                 
@@ -4765,13 +4838,11 @@ class TestPanelPageParserSubsidiary( TestPanelPageParser ):
             
             etype = type( e )
             
-            value = HydrusData.ToUnicode( e )
-            
             ( etype, value, tb ) = sys.exc_info()
             
             trace = ''.join( traceback.format_exception( etype, value, tb ) )
             
-            message = 'Exception:' + os.linesep + HydrusData.ToUnicode( etype.__name__ ) + ': ' + HydrusData.ToUnicode( value ) + os.linesep + HydrusData.ToUnicode( trace )
+            message = 'Exception:' + os.linesep + str( etype.__name__ ) + ': ' + str( e ) + os.linesep + trace
             
             self._results.SetValue( message )
             

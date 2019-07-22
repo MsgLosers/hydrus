@@ -1,15 +1,16 @@
-import ClientConstants as CC
-import ClientData
-import ClientGUICommon
-import ClientGUIControls
-import ClientGUIDialogs
-import ClientGUIScrolledPanels
-import ClientGUITopLevelWindows
-import ClientThreading
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientGUICommon
+from . import ClientGUIControls
+from . import ClientGUIDialogs
+from . import ClientGUIFunctions
+from . import ClientGUIScrolledPanels
+from . import ClientGUITopLevelWindows
+from . import ClientThreading
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
 import os
 import sys
 import traceback
@@ -17,16 +18,18 @@ import wx
 
 class PopupWindow( wx.Window ):
     
-    def __init__( self, parent ):
+    def __init__( self, parent, manager ):
         
         wx.Window.__init__( self, parent, style = wx.BORDER_SIMPLE )
+        
+        self._manager = manager
         
         self.Bind( wx.EVT_RIGHT_DOWN, self.EventDismiss )
         
     
     def TryToDismiss( self ):
         
-        self.GetParent().Dismiss( self )
+        self._manager.Dismiss( self )
         
     
     def EventDismiss( self, event ):
@@ -34,50 +37,13 @@ class PopupWindow( wx.Window ):
         self.TryToDismiss()
         
     
-class PopupDismissAll( PopupWindow ):
-    
-    def __init__( self, parent ):
-        
-        PopupWindow.__init__( self, parent )
-        
-        hbox = wx.BoxSizer( wx.HORIZONTAL )
-        
-        self._text = ClientGUICommon.BetterStaticText( self )
-        self._text.Bind( wx.EVT_RIGHT_DOWN, self.EventDismiss )
-        
-        button = wx.Button( self, label = 'dismiss all' )
-        button.Bind( wx.EVT_BUTTON, self.EventButton )
-        button.Bind( wx.EVT_RIGHT_DOWN, self.EventDismiss )
-        
-        hbox.Add( self._text, CC.FLAGS_VCENTER )
-        hbox.Add( ( 20, 20 ), CC.FLAGS_EXPAND_BOTH_WAYS )
-        hbox.Add( button, CC.FLAGS_VCENTER )
-        
-        self.SetSizer( hbox )
-        
-    
-    def TryToDismiss( self ):
-        
-        pass
-        
-    
-    def EventButton( self, event ):
-        
-        self.GetParent().DismissAll()
-        
-    
-    def SetNumMessages( self, num_messages_pending ):
-        
-        self._text.SetLabelText( HydrusData.ToHumanInt( num_messages_pending ) + ' more messages' )
-        
-    
 class PopupMessage( PopupWindow ):
     
     TEXT_CUTOFF = 1024
     
-    def __init__( self, parent, job_key ):
+    def __init__( self, parent, manager, job_key ):
         
-        PopupWindow.__init__( self, parent )
+        PopupWindow.__init__( self, parent, manager )
         
         self._job_key = job_key
         
@@ -87,7 +53,7 @@ class PopupMessage( PopupWindow ):
         
         popup_message_character_width = HG.client_controller.new_options.GetInteger( 'popup_message_character_width' )
         
-        wrap_width = ClientGUICommon.ConvertTextToPixelWidth( self._title, popup_message_character_width )
+        wrap_width = ClientGUIFunctions.ConvertTextToPixelWidth( self._title, popup_message_character_width )
         
         if HG.client_controller.new_options.GetBoolean( 'popup_message_force_min_width' ):
             
@@ -199,6 +165,8 @@ class PopupMessage( PopupWindow ):
     
     def _ProcessText( self, text ):
         
+        text = str( text )
+        
         if len( text ) > self.TEXT_CUTOFF:
             
             new_text = 'The text is too long to display here. Here is the start of it (the rest is printed to the log):'
@@ -254,11 +222,11 @@ class PopupMessage( PopupWindow ):
         
         if self._job_key.IsPaused():
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.play )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.play )
             
         else:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.pause )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._pause_button, CC.GlobalBMPs.pause )
             
         
     
@@ -288,12 +256,12 @@ class PopupMessage( PopupWindow ):
             
             popup_message_character_width = HG.client_controller.new_options.GetInteger( 'popup_message_character_width' )
             
-            wrap_width = ClientGUICommon.ConvertTextToPixelWidth( self._title, popup_message_character_width )
+            wrap_width = ClientGUIFunctions.ConvertTextToPixelWidth( self._title, popup_message_character_width )
             
             self._tb_text.Show()
             
         
-        self.GetParent().MakeSureEverythingFits()
+        self._manager.MakeSureEverythingFits()
         
     
     def GetJobKey( self ):
@@ -322,7 +290,7 @@ class PopupMessage( PopupWindow ):
         
         popup_message_character_width = HG.client_controller.new_options.GetInteger( 'popup_message_character_width' )
         
-        wrap_width = ClientGUICommon.ConvertTextToPixelWidth( self._title, popup_message_character_width )
+        wrap_width = ClientGUIFunctions.ConvertTextToPixelWidth( self._title, popup_message_character_width )
         
         paused = self._job_key.IsPaused()
         
@@ -383,7 +351,7 @@ class PopupMessage( PopupWindow ):
             
             text = popup_text_2
             
-            self._text_2.SetLabelText( self._ProcessText( HydrusData.ToUnicode( text ) ) )
+            self._text_2.SetLabelText( self._ProcessText( text ) )
             
             self._text_2.Show()
             
@@ -414,10 +382,7 @@ class PopupMessage( PopupWindow ):
             
             text = popup_yes_no_question
             
-            if self._text_yes_no.GetLabelText() != text:
-                
-                self._text_yes_no.SetLabelText( self._ProcessText( HydrusData.ToUnicode( text ) ) )
-                
+            self._text_yes_no.SetLabelText( self._ProcessText( text ) )
             
             self._text_yes_no.Show()
             
@@ -503,10 +468,7 @@ class PopupMessage( PopupWindow ):
             
             text = popup_traceback
             
-            if self._tb_text.GetLabelText() != text:
-                
-                self._tb_text.SetLabelText( self._ProcessText( HydrusData.ToUnicode( text ) ) )
-                
+            self._tb_text.SetLabelText( self._ProcessText( text ) )
             
             self._show_tb_button.Show()
             
@@ -549,13 +511,16 @@ class PopupMessageManager( wx.Frame ):
         
         vbox = wx.BoxSizer( wx.VERTICAL )
         
+        self._message_panel = wx.Panel( self )
+        
         self._message_vbox = wx.BoxSizer( wx.VERTICAL )
         
-        self._dismiss_all = PopupDismissAll( self )
-        self._dismiss_all.Hide()
+        self._message_panel.SetSizer( self._message_vbox )
         
-        vbox.Add( self._message_vbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
-        vbox.Add( self._dismiss_all, CC.FLAGS_EXPAND_PERPENDICULAR )
+        self._summary_bar = PopupMessageSummaryBar( self, self )
+        
+        vbox.Add( self._message_panel, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
+        vbox.Add( self._summary_bar, CC.FLAGS_EXPAND_PERPENDICULAR )
         
         self.SetSizer( vbox )
         
@@ -575,7 +540,7 @@ class PopupMessageManager( wx.Frame ):
         
         job_key = ClientThreading.JobKey()
         
-        job_key.SetVariable( 'popup_text_1', u'initialising popup message manager\u2026' )
+        job_key.SetVariable( 'popup_text_1', 'initialising popup message manager\u2026' )
         
         self._update_job = HG.client_controller.CallRepeatingWXSafe( self, 0.25, 0.5, self.REPEATINGUpdate )
         
@@ -594,7 +559,7 @@ class PopupMessageManager( wx.Frame ):
             
             job_key = self._pending_job_keys.pop( 0 )
             
-            window = PopupMessage( self, job_key )
+            window = PopupMessage( self._message_panel, self, job_key )
             
             window.UpdateMessage()
             
@@ -603,25 +568,9 @@ class PopupMessageManager( wx.Frame ):
             force_relayout = True
             
         
-        dismiss_shown_before = self._dismiss_all.IsShown()
+        total_messages = len( self._pending_job_keys ) + self._message_vbox.GetItemCount()
         
-        num_messages_pending = len( self._pending_job_keys )
-        
-        if num_messages_pending > 0:
-            
-            self._dismiss_all.SetNumMessages( num_messages_pending )
-            
-            self._dismiss_all.Show()
-            
-        else:
-            
-            self._dismiss_all.Hide()
-            
-        
-        if self._dismiss_all.IsShown() != dismiss_shown_before:
-            
-            force_relayout = True
-            
+        self._summary_bar.SetNumMessages( total_messages )
         
         if force_relayout:
             
@@ -766,7 +715,7 @@ class PopupMessageManager( wx.Frame ):
                 
                 popup_message_character_width = HG.client_controller.new_options.GetInteger( 'popup_message_character_width' )
                 
-                wrap_width = ClientGUICommon.ConvertTextToPixelWidth( self, popup_message_character_width )
+                wrap_width = ClientGUIFunctions.ConvertTextToPixelWidth( self, popup_message_character_width )
                 
                 max_width = wrap_width * 1.2
                 
@@ -794,7 +743,7 @@ class PopupMessageManager( wx.Frame ):
                 
                 if parent.IsShown():
                     
-                    my_position = ClientGUICommon.ClientToScreen( parent, ( my_x, my_y ) )
+                    my_position = ClientGUIFunctions.ClientToScreen( parent, ( my_x, my_y ) )
                     
                     if my_position != self.GetPosition():
                         
@@ -871,7 +820,9 @@ class PopupMessageManager( wx.Frame ):
         
         main_gui = self.GetParent()
         
-        not_on_hidden_or_virtual_display = ClientGUITopLevelWindows.MouseIsOnMyDisplay( main_gui )
+        # test both because when user uses a shortcut to send gui to a diff monitor, we can't chase it
+        # this may need a better test for virtual display dismissal
+        not_on_hidden_or_virtual_display = ClientGUITopLevelWindows.MouseIsOnMyDisplay( main_gui ) or ClientGUITopLevelWindows.MouseIsOnMyDisplay( self )
         
         main_gui_up = not main_gui.IsIconized()
         
@@ -1043,7 +994,28 @@ class PopupMessageManager( wx.Frame ):
         self._CheckPending()
         
     
+    def ExpandCollapse( self ):
+        
+        if self._message_panel.IsShown():
+            
+            self._message_panel.Hide()
+            
+        else:
+            
+            self._message_panel.Show()
+            
+            self.Fit()
+            
+        
+        self.MakeSureEverythingFits()
+        
+    
     def EventMove( self, event ):
+        
+        if not self: # funny runtime error caused this
+            
+            return
+            
         
         if self._OKToAlterUI():
             
@@ -1084,15 +1056,15 @@ class PopupMessageManager( wx.Frame ):
             
         
     
-class PopupMessageDialogPanel( ClientGUIScrolledPanels.ReviewPanelVetoable ):
+class PopupMessageDialogPanel( ClientGUIScrolledPanels.ReviewPanel ):
     
     def __init__( self, parent, job_key ):
         
-        ClientGUIScrolledPanels.ReviewPanelVetoable.__init__( self, parent )
+        ClientGUIScrolledPanels.ReviewPanel.__init__( self, parent )
         
         self._job_key = job_key
         
-        self._message_window = PopupMessage( self, self._job_key )
+        self._message_window = PopupMessage( self, self, self._job_key )
         
         vbox = wx.BoxSizer( wx.VERTICAL )
         
@@ -1123,7 +1095,12 @@ class PopupMessageDialogPanel( ClientGUIScrolledPanels.ReviewPanelVetoable ):
                 continue
                 
             
-            import ClientGUI
+            if ClientGUIFunctions.IsWXAncestor( self, tlw, through_tlws = True ):
+                
+                continue
+                
+            
+            from . import ClientGUI
             
             if isinstance( tlw, ClientGUI.FrameGUI ):
                 
@@ -1221,7 +1198,7 @@ class PopupMessageDialogPanel( ClientGUIScrolledPanels.ReviewPanelVetoable ):
                 
                 if parent.IsModal(): # event sometimes fires after modal done
                     
-                    self.GetParent().DoOK()
+                    parent.DoOK()
                     
                 
             else:
@@ -1236,4 +1213,60 @@ class PopupMessageDialogPanel( ClientGUIScrolledPanels.ReviewPanelVetoable ):
             raise
             
         
+
+class PopupMessageSummaryBar( PopupWindow ):
     
+    def __init__( self, parent, manager ):
+        
+        PopupWindow.__init__( self, parent, manager )
+        
+        hbox = wx.BoxSizer( wx.HORIZONTAL )
+        
+        self._text = ClientGUICommon.BetterStaticText( self )
+        
+        self._expand_collapse = ClientGUICommon.BetterButton( self, '\u25bc', self.ExpandCollapse )
+        
+        dismiss_all = ClientGUICommon.BetterButton( self, 'dismiss all', self._manager.DismissAll )
+        
+        hbox.Add( self._text, CC.FLAGS_VCENTER )
+        hbox.Add( ( 20, 20 ), CC.FLAGS_EXPAND_BOTH_WAYS )
+        hbox.Add( dismiss_all, CC.FLAGS_VCENTER )
+        hbox.Add( self._expand_collapse, CC.FLAGS_VCENTER )
+        
+        self.SetSizer( hbox )
+        
+    
+    def ExpandCollapse( self ):
+        
+        self._manager.ExpandCollapse()
+        
+        current_text = self._expand_collapse.GetLabelText()
+        
+        if current_text == '\u25bc':
+            
+            new_text = '\u25b2'
+            
+        else:
+            
+            new_text = '\u25bc'
+            
+        
+        self._expand_collapse.SetLabelText( new_text )
+        
+    
+    def TryToDismiss( self ):
+        
+        pass
+        
+    
+    def SetNumMessages( self, num_messages_pending ):
+        
+        if num_messages_pending == 1:
+            
+            self._text.SetLabelText( '1 message' )
+            
+        else:
+            
+            self._text.SetLabelText( HydrusData.ToHumanInt( num_messages_pending ) + ' messages' )
+            
+        

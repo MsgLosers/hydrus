@@ -14,8 +14,11 @@ class DataMissing( HydrusException ): pass
 class DBException( HydrusException ): pass
 class DBAccessException( HydrusException ): pass
 class FileMissingException( HydrusException ): pass
+class DirectoryMissingException( HydrusException ): pass
+class SerialisationException( HydrusException ): pass
 class NameException( HydrusException ): pass
 class ShutdownException( HydrusException ): pass
+class WXDeadWindowException( HydrusException ): pass
 
 class VetoException( HydrusException ): pass
 class CancelledException( VetoException ): pass
@@ -26,7 +29,7 @@ class DecompressionBombException( SizeException ): pass
 class ParseException( HydrusException ): pass
 class StringConvertException( ParseException ): pass
 class StringMatchException( ParseException ): pass
-class URLMatchException( ParseException ): pass
+class URLClassException( ParseException ): pass
 class GUGException( ParseException ): pass
 
 class NetworkException( HydrusException ): pass
@@ -37,12 +40,14 @@ class FirewallException( NetworkInfrastructureException ): pass
 class ServerBusyException( NetworkInfrastructureException ): pass
 
 class BandwidthException( NetworkException ): pass
-class ForbiddenException( NetworkException ): pass
 class NetworkVersionException( NetworkException ): pass
 class NoContentException( NetworkException ): pass
 class NotFoundException( NetworkException ): pass
 class NotModifiedException( NetworkException ): pass
-class PermissionException( NetworkException ): pass
+class BadRequestException( NetworkException ): pass
+class MissingCredentialsException( NetworkException ): pass
+class DoesNotSupportCORSException( NetworkException ): pass
+class InsufficientCredentialsException( NetworkException ): pass
 class RedirectionException( NetworkException ): pass
 class ServerException( NetworkException ): pass
 class SessionException( NetworkException ): pass

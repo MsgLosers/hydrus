@@ -1,10 +1,11 @@
-import ClientConstants as CC
-import ClientData
-import ClientGUICommon
-import HydrusConstants as HC
-import HydrusData
-import HydrusGlobals as HG
-import HydrusSerialisable
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientGUICommon
+from . import ClientGUIFunctions
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
 import wx
 
 FLASHWIN_OK = False
@@ -26,7 +27,7 @@ def ConvertKeyEventToShortcut( event ):
     
     key = event.KeyCode
     
-    if ClientData.OrdIsSensibleASCII( key ) or key in CC.wxk_code_string_lookup.keys():
+    if ClientData.OrdIsSensibleASCII( key ) or key in list(CC.wxk_code_string_lookup.keys()):
         
         modifiers = []
         
@@ -125,7 +126,7 @@ def ConvertMouseEventToShortcut( event ):
     
     return None
     
-def IShouldCatchCharHook( evt_handler ):
+def IShouldCatchShortcutEvent( evt_handler, event = None, child_tlp_classes_who_can_pass_up = None ):
     
     if HC.PLATFORM_WINDOWS and FLASHWIN_OK:
         
@@ -137,14 +138,34 @@ def IShouldCatchCharHook( evt_handler ):
             
         
     
-    if HG.client_controller.MenuIsOpen():
+    do_focus_test = True
+    
+    if event is not None and isinstance( event, wx.MouseEvent ):
         
-        return False
+        if event.GetEventType() == wx.wxEVT_MOUSEWHEEL:
+            
+            do_focus_test = False
+            
         
     
-    if not ClientGUICommon.WindowOrSameTLPChildHasFocus( evt_handler ):
+    if do_focus_test:
         
-        return False
+        if not ClientGUIFunctions.WindowOrSameTLPChildHasFocus( evt_handler ):
+            
+            if child_tlp_classes_who_can_pass_up is not None:
+                
+                child_tlp_has_focus = ClientGUIFunctions.WindowOrAnyTLPChildHasFocus( evt_handler ) and isinstance( ClientGUIFunctions.GetFocusTLP(), child_tlp_classes_who_can_pass_up )
+                
+                if not child_tlp_has_focus:
+                    
+                    return False
+                    
+                
+            else:
+                
+                return False
+                
+            
         
     
     return True
@@ -179,11 +200,6 @@ class Shortcut( HydrusSerialisable.SerialisableBase ):
         self._shortcut_type = shortcut_type
         self._shortcut_key = shortcut_key
         self._modifiers = modifiers
-        
-    
-    def __cmp__( self, other ):
-        
-        return cmp( self.ToString(), other.ToString() )
         
     
     def __eq__( self, other ):
@@ -427,10 +443,10 @@ class ShortcutMouse( wx.Button ):
         
     
 
-class Shortcuts( HydrusSerialisable.SerialisableBaseNamed ):
+class ShortcutSet( HydrusSerialisable.SerialisableBaseNamed ):
     
-    SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_SHORTCUTS
-    SERIALISABLE_NAME = 'Shortcuts'
+    SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_SHORTCUT_SET
+    SERIALISABLE_NAME = 'Shortcut Set'
     SERIALISABLE_VERSION = 2
     
     def __init__( self, name ):
@@ -442,7 +458,7 @@ class Shortcuts( HydrusSerialisable.SerialisableBaseNamed ):
     
     def __iter__( self ):
         
-        for ( shortcut, command ) in self._shortcuts_to_commands.items():
+        for ( shortcut, command ) in list( self._shortcuts_to_commands.items() ):
             
             yield ( shortcut, command )
             
@@ -455,7 +471,7 @@ class Shortcuts( HydrusSerialisable.SerialisableBaseNamed ):
     
     def _GetSerialisableInfo( self ):
         
-        return [ ( shortcut.GetSerialisableTuple(), command.GetSerialisableTuple() ) for ( shortcut, command ) in self._shortcuts_to_commands.items() ]
+        return [ ( shortcut.GetSerialisableTuple(), command.GetSerialisableTuple() ) for ( shortcut, command ) in list(self._shortcuts_to_commands.items()) ]
         
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
@@ -500,7 +516,7 @@ class Shortcuts( HydrusSerialisable.SerialisableBaseNamed ):
                     
                 else:
                     
-                    service_key = serialisable_service_key.decode( 'hex' )
+                    service_key = bytes.fromhex( serialisable_service_key )
                     
                     if not services_manager.ServiceExists( service_key ):
                         
@@ -534,7 +550,7 @@ class Shortcuts( HydrusSerialisable.SerialisableBaseNamed ):
                 shortcuts_to_commands[ shortcut ] = command
                 
             
-            new_serialisable_info = ( ( shortcut.GetSerialisableTuple(), command.GetSerialisableTuple() ) for ( shortcut, command ) in shortcuts_to_commands.items() )
+            new_serialisable_info = ( ( shortcut.GetSerialisableTuple(), command.GetSerialisableTuple() ) for ( shortcut, command ) in list(shortcuts_to_commands.items()) )
             
             return ( 2, new_serialisable_info )
             
@@ -552,12 +568,27 @@ class Shortcuts( HydrusSerialisable.SerialisableBaseNamed ):
             
         
     
+    def GetShortcuts( self, simple_command ):
+        
+        shortcuts = []
+        
+        for ( shortcut, command ) in self._shortcuts_to_commands.items():
+            
+            if command.GetCommandType() == CC.APPLICATION_COMMAND_TYPE_SIMPLE and command.GetData() == simple_command:
+                
+                shortcuts.append( shortcut )
+                
+            
+        
+        return shortcuts
+        
+    
     def SetCommand( self, shortcut, command ):
         
         self._shortcuts_to_commands[ shortcut ] = command
         
     
-HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_SHORTCUTS ] = Shortcuts
+HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_SHORTCUT_SET ] = ShortcutSet
 
 class ShortcutsHandler( object ):
     
@@ -620,7 +651,7 @@ class ShortcutsHandler( object ):
                 
                 message = 'Key shortcut "' + shortcut.ToString() + '" passing through ' + repr( self._parent ) + '.'
                 
-                if IShouldCatchCharHook( self._parent ):
+                if IShouldCatchShortcutEvent( self._parent, event = event ):
                     
                     message += ' I am in a state to catch it.'
                     
@@ -632,7 +663,7 @@ class ShortcutsHandler( object ):
                 HydrusData.ShowText( message )
                 
             
-            if IShouldCatchCharHook( self._parent ):
+            if IShouldCatchShortcutEvent( self._parent, event = event ):
                 
                 shortcut_processed = self._ProcessShortcut( shortcut )
                 
@@ -677,5 +708,77 @@ class ShortcutsHandler( object ):
             
             self._shortcuts_names.remove( shortcuts_name )
             
+        
+    
+class ShortcutsManager( object ):
+    
+    def __init__( self, controller ):
+        
+        self._controller = controller
+        
+        self._shortcuts = {}
+        
+        self._RefreshShortcuts()
+        
+        self._controller.sub( self, 'RefreshShortcuts', 'notify_new_shortcuts_data' )
+        
+    
+    def _RefreshShortcuts( self ):
+        
+        self._shortcuts = {}
+        
+        all_shortcuts = HG.client_controller.Read( 'serialisable_named', HydrusSerialisable.SERIALISABLE_TYPE_SHORTCUT_SET )
+        
+        for shortcuts in all_shortcuts:
+            
+            self._shortcuts[ shortcuts.GetName() ] = shortcuts
+            
+        
+    
+    def GetCommand( self, shortcuts_names, shortcut ):
+        
+        for name in shortcuts_names:
+            
+            if name in self._shortcuts:
+                
+                command = self._shortcuts[ name ].GetCommand( shortcut )
+                
+                if command is not None:
+                    
+                    if HG.gui_report_mode:
+                        
+                        HydrusData.ShowText( 'command matched: ' + repr( command ) )
+                        
+                    
+                    return command
+                    
+                
+            
+        
+        return None
+        
+    
+    def GetNamesToShortcuts( self, simple_command ):
+        
+        names_to_shortcuts = {}
+        
+        for ( name, shortcut_set ) in self._shortcuts.items():
+            
+            shortcuts = shortcut_set.GetShortcuts( simple_command )
+            
+            if len( shortcuts ) > 0:
+                
+                names_to_shortcuts[ name ] = shortcuts
+                
+            
+        
+        return names_to_shortcuts
+        
+    
+    def RefreshShortcuts( self ):
+        
+        self._RefreshShortcuts()
+        
+        HG.client_controller.pub( 'notify_new_shortcuts_gui' )
         
     

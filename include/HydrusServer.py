@@ -1,9 +1,9 @@
-import HydrusConstants as HC
-import HydrusServerResources
+from . import HydrusConstants as HC
+from . import HydrusServerResources
 import traceback
 from twisted.web.server import Request, Site
 from twisted.web.resource import Resource
-import HydrusData
+from . import HydrusData
 import time
 
 LOCAL_DOMAIN = HydrusServerResources.HydrusDomain( True )
@@ -16,20 +16,23 @@ class HydrusRequest( Request ):
         Request.__init__( self, *args, **kwargs )
         
         self.start_time = time.clock()
-        self.is_hydrus_client = True
-        self.hydrus_args = None
+        self.parsed_request_args = None
         self.hydrus_response_context = None
+        self.hydrus_account = None
+        self.client_api_permissions = None
         
+    
+class HydrusRequestLogging( HydrusRequest ):
     
     def finish( self ):
         
-        Request.finish( self )
+        HydrusRequest.finish( self )
         
         host = self.getHost()
         
         if self.hydrus_response_context is not None:
             
-            status_text = HydrusData.ToUnicode( self.hydrus_response_context.GetStatusCode() )
+            status_text = str( self.hydrus_response_context.GetStatusCode() )
             
         elif hasattr( self, 'code' ):
             
@@ -40,7 +43,7 @@ class HydrusRequest( Request ):
             status_text = '200'
             
         
-        message = str( host.port ) + ' ' + HydrusData.ToUnicode( self.method ) + ' ' + HydrusData.ToUnicode( self.path ) + ' ' + status_text + ' in ' + HydrusData.TimeDeltaToPrettyTimeDelta( time.clock() - self.start_time )
+        message = str( host.port ) + ' ' + str( self.method, 'utf-8' ) + ' ' + str( self.path, 'utf-8' ) + ' ' + status_text + ' in ' + HydrusData.TimeDeltaToPrettyTimeDelta( time.clock() - self.start_time )
         
         HydrusData.Print( message )
         
@@ -55,16 +58,23 @@ class HydrusService( Site ):
         
         Site.__init__( self, root )
         
-        self.requestFactory = HydrusRequest
+        if service.LogsRequests():
+            
+            self.requestFactory = HydrusRequestLogging
+            
+        else:
+            
+            self.requestFactory = HydrusRequest
+            
         
     
     def _InitRoot( self ):
         
         root = Resource()
         
-        root.putChild( '', HydrusServerResources.HydrusResourceWelcome( self._service, REMOTE_DOMAIN ) )
-        root.putChild( 'favicon.ico', HydrusServerResources.hydrus_favicon )
-        root.putChild( 'robots.txt', HydrusServerResources.HydrusResourceRobotsTXT( self._service, REMOTE_DOMAIN ) )
+        root.putChild( b'', HydrusServerResources.HydrusResourceWelcome( self._service, REMOTE_DOMAIN ) )
+        root.putChild( b'favicon.ico', HydrusServerResources.hydrus_favicon )
+        root.putChild( b'robots.txt', HydrusServerResources.HydrusResourceRobotsTXT( self._service, REMOTE_DOMAIN ) )
         
         return root
         

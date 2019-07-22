@@ -1,54 +1,55 @@
-import HydrusConstants as HC
-import ClientConstants as CC
-import ClientData
-import ClientDefaults
-import ClientDownloading
-import ClientDragDrop
-import ClientExporting
-import ClientCaches
-import ClientFiles
-import ClientGUIACDropdown
-import ClientGUIFrames
-import ClientGUICommon
-import ClientGUIDialogsQuick
-import ClientGUIImport
-import ClientGUIListBoxes
-import ClientGUIListCtrl
-import ClientGUIPredicates
-import ClientGUIShortcuts
-import ClientGUITime
-import ClientGUITopLevelWindows
-import ClientImporting
-import ClientThreading
+from . import HydrusConstants as HC
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientDefaults
+from . import ClientDownloading
+from . import ClientDragDrop
+from . import ClientExporting
+from . import ClientCaches
+from . import ClientFiles
+from . import ClientGUIACDropdown
+from . import ClientGUIFrames
+from . import ClientGUICommon
+from . import ClientGUIDialogsQuick
+from . import ClientGUIFunctions
+from . import ClientGUIImport
+from . import ClientGUIListBoxes
+from . import ClientGUIListCtrl
+from . import ClientGUIPredicates
+from . import ClientGUIShortcuts
+from . import ClientGUITime
+from . import ClientGUITopLevelWindows
+from . import ClientImporting
+from . import ClientTags
+from . import ClientThreading
 import collections
 import gc
-import HydrusExceptions
-import HydrusFileHandling
-import HydrusNATPunch
-import HydrusNetwork
-import HydrusPaths
-import HydrusSerialisable
-import HydrusTagArchive
-import HydrusTags
-import HydrusThreading
+from . import HydrusExceptions
+from . import HydrusFileHandling
+from . import HydrusNATPunch
+from . import HydrusNetwork
+from . import HydrusPaths
+from . import HydrusSerialisable
+from . import HydrusTagArchive
+from . import HydrusTags
+from . import HydrusThreading
 import itertools
 import os
 import random
 import re
-import Queue
+import queue
 import shutil
 import stat
 import string
 import threading
 import time
 import traceback
-import urllib
 import wx
 import wx.lib.agw.customtreectrl
 import yaml
-import HydrusData
-import ClientSearch
-import HydrusGlobals as HG
+from . import HydrusData
+from . import ClientSearch
+from . import HydrusGlobals as HG
 
 # Option Enums
 
@@ -135,7 +136,7 @@ class Dialog( wx.Dialog ):
         
         self.SetIcon( HG.client_controller.frame_icon )
         
-        self.Bind( wx.EVT_BUTTON, self.EventDialogButton )
+        self.Bind( wx.EVT_CHAR_HOOK, self.EventCharHook )
         
         if parent is not None and position == 'center':
             
@@ -145,15 +146,23 @@ class Dialog( wx.Dialog ):
         HG.client_controller.ResetIdleTimer()
         
     
-    def EventDialogButton( self, event ):
+    def EventCharHook( self, event ):
         
-        if self.IsModal():
+        ( modifier, key ) = ClientGUIShortcuts.ConvertKeyEventToSimpleTuple( event )
+        
+        if key == wx.WXK_ESCAPE:
             
-            self.EndModal( event.GetId() )
+            self.EndModal( wx.ID_CANCEL )
+            
+        else:
+            
+            event.Skip()
             
         
     
-    def SetInitialSize( self, ( width, height ) ):
+    def SetInitialSize( self, size ):
+        
+        ( width, height ) = size
         
         ( display_width, display_height ) = ClientGUITopLevelWindows.GetDisplaySize( self )
         
@@ -168,89 +177,11 @@ class Dialog( wx.Dialog ):
         self.SetMinSize( ( min_width, min_height ) )
         
     
-class DialogButtonChoice( Dialog ):
-    
-    def __init__( self, parent, intro, choices, show_always_checkbox = False ):
-        
-        Dialog.__init__( self, parent, 'choose what to do', position = 'center' )
-        
-        self._hidden_cancel = wx.Button( self, id = wx.ID_CANCEL, size = ( 0, 0 ) )
-        
-        self._buttons = []
-        self._ids_to_data = {}
-        
-        i = 0
-        
-        for ( text, data, tooltip ) in choices:
-            
-            button = wx.Button( self, label = text, id = i )
-            
-            button.SetToolTip( tooltip )
-            
-            self._buttons.append( button )
-            
-            self._ids_to_data[ i ] = data
-            
-            i += 1
-            
-        
-        self._always_do_checkbox = wx.CheckBox( self, label = 'do this for all' )
-        
-        vbox = wx.BoxSizer( wx.VERTICAL )
-        
-        vbox.Add( ClientGUICommon.BetterStaticText( self, intro ), CC.FLAGS_EXPAND_PERPENDICULAR )
-        
-        for button in self._buttons:
-            
-            vbox.Add( button, CC.FLAGS_EXPAND_PERPENDICULAR )
-            
-        
-        vbox.Add( self._always_do_checkbox, CC.FLAGS_LONE_BUTTON )
-        
-        if not show_always_checkbox:
-            
-            self._always_do_checkbox.Hide()
-            
-        
-        self.SetSizer( vbox )
-        
-        ( x, y ) = self.GetEffectiveMinSize()
-        
-        self.SetInitialSize( ( x, y ) )
-        
-        self.Bind( wx.EVT_BUTTON, self.EventButton )
-        
-        if len( self._buttons ) > 0:
-            
-            wx.CallAfter( self._buttons[0].SetFocus )
-            
-        
-    
-    def EventButton( self, event ):
-        
-        id = event.GetId()
-        
-        if id == wx.ID_CANCEL: self.EndModal( wx.ID_CANCEL )
-        else:
-            
-            self._data = self._ids_to_data[ id ]
-            
-            self.EndModal( wx.ID_OK )
-            
-        
-    
-    def GetData( self ):
-        
-        return ( self._always_do_checkbox.GetValue(), self._data )
-        
-    
 class DialogChooseNewServiceMethod( Dialog ):
     
     def __init__( self, parent ):
         
         Dialog.__init__( self, parent, 'how to set up the account?', position = 'center' )
-        
-        self._hidden_cancel = wx.Button( self, id = wx.ID_CANCEL, size = ( 0, 0 ) )
         
         register_message = 'I want to initialise a new account with the server. I have a registration key (a key starting with \'r\').'
         
@@ -285,7 +216,10 @@ class DialogChooseNewServiceMethod( Dialog ):
         self.EndModal( wx.ID_OK )
         
     
-    def GetRegister( self ): return self._should_register
+    def GetRegister( self ):
+        
+        return self._should_register
+        
     
 class DialogCommitInterstitialFiltering( Dialog ):
     
@@ -293,10 +227,10 @@ class DialogCommitInterstitialFiltering( Dialog ):
         
         Dialog.__init__( self, parent, 'commit and continue?', position = 'center' )
         
-        self._commit = wx.Button( self, id = wx.ID_YES, label = 'commit and continue' )
+        self._commit = ClientGUICommon.BetterButton( self, 'commit and continue', self.EndModal, wx.ID_YES )
         self._commit.SetForegroundColour( ( 0, 128, 0 ) )
         
-        self._back = wx.Button( self, id = wx.ID_CANCEL, label = 'go back' )
+        self._back = ClientGUICommon.BetterButton( self, 'go back', self.EndModal, wx.ID_NO )
         
         vbox = wx.BoxSizer( wx.VERTICAL )
         
@@ -327,7 +261,6 @@ class DialogFinishFiltering( Dialog ):
         self._forget.SetForegroundColour( ( 128, 0, 0 ) )
         
         self._back = ClientGUICommon.BetterButton( self, 'back to filtering', self.EndModal, wx.ID_CANCEL )
-        self._back.SetId( wx.ID_CANCEL )
         
         hbox = wx.BoxSizer( wx.HORIZONTAL )
         
@@ -364,7 +297,7 @@ class DialogGenerateNewAccounts( Dialog ):
         
         self._lifetime = ClientGUICommon.BetterChoice( self )
         
-        self._ok = wx.Button( self, label = 'OK' )
+        self._ok = wx.Button( self, id = wx.ID_OK, label = 'OK' )
         self._ok.Bind( wx.EVT_BUTTON, self.EventOK )
         self._ok.SetForegroundColour( ( 0, 128, 0 ) )
         
@@ -465,165 +398,6 @@ class DialogGenerateNewAccounts( Dialog ):
             
         
     
-class DialogInputFileSystemPredicates( Dialog ):
-    
-    def __init__( self, parent, predicate_type ):
-        
-        Dialog.__init__( self, parent, 'enter predicate' )
-        
-        pred_classes = []
-        
-        if predicate_type == HC.PREDICATE_TYPE_SYSTEM_AGE:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemAgeDelta )
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemAgeDate )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_DIMENSIONS:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemHeight )
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemWidth )
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemRatio )
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemNumPixels )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_DURATION:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemDuration )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_FILE_SERVICE:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemFileService )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_KNOWN_URLS:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemKnownURLsExactURL )
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemKnownURLsDomain )
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemKnownURLsRegex )
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemKnownURLsURLMatch )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_HASH:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemHash )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_LIMIT:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemLimit )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_MIME:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemMime )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_NUM_TAGS:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemNumTags )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_NUM_WORDS:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemNumWords )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_RATING:
-            
-            services_manager = HG.client_controller.services_manager
-            
-            ratings_services = services_manager.GetServices( ( HC.LOCAL_RATING_LIKE, HC.LOCAL_RATING_NUMERICAL ) )
-            
-            if len( ratings_services ) > 0:
-                
-                pred_classes.append( ClientGUIPredicates.PanelPredicateSystemRating )
-                
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_SIMILAR_TO:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemSimilarTo )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_SIZE:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemSize )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_TAG_AS_NUMBER:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemTagAsNumber )
-            
-        elif predicate_type == HC.PREDICATE_TYPE_SYSTEM_DUPLICATE_RELATIONSHIPS:
-            
-            pred_classes.append( ClientGUIPredicates.PanelPredicateSystemDuplicateRelationships )
-            
-        
-        vbox = wx.BoxSizer( wx.VERTICAL )
-        
-        for pred_class in pred_classes:
-            
-            panel = self._Panel( self, pred_class )
-            
-            vbox.Add( panel, CC.FLAGS_EXPAND_PERPENDICULAR )
-            
-        
-        self.SetSizer( vbox )
-        
-        self._hidden_cancel = wx.Button( self, id = wx.ID_CANCEL, size = ( 0, 0 ) )
-    
-        ( x, y ) = self.GetEffectiveMinSize()
-        
-        self.SetInitialSize( ( x, y ) )
-        
-    
-    def SubPanelOK( self, predicates ):
-        
-        self._predicates = predicates
-        
-        self.EndModal( wx.ID_OK )
-        
-    
-    def GetPredicates( self ): return self._predicates
-    
-    class _Panel( wx.Panel ):
-        
-        def __init__( self, parent, predicate_class ):
-            
-            wx.Panel.__init__( self, parent )
-            
-            self._predicate_panel = predicate_class( self )
-            
-            self._ok = wx.Button( self, id = wx.ID_OK, label = 'OK' )
-            self._ok.Bind( wx.EVT_BUTTON, self.EventOK )
-            self._ok.SetForegroundColour( ( 0, 128, 0 ) )
-            
-            hbox = wx.BoxSizer( wx.HORIZONTAL )
-            
-            hbox.Add( self._predicate_panel, CC.FLAGS_EXPAND_SIZER_BOTH_WAYS )
-            hbox.Add( self._ok, CC.FLAGS_VCENTER )
-            
-            self.SetSizer( hbox )
-            
-            self.Bind( wx.EVT_CHAR_HOOK, self.EventCharHook )
-            
-        
-        def _DoOK( self ):
-            
-            predicates = self._predicate_panel.GetPredicates()
-            
-            self.GetParent().SubPanelOK( predicates )
-            
-        
-        def EventCharHook( self, event ):
-            
-            ( modifier, key ) = ClientGUIShortcuts.ConvertKeyEventToSimpleTuple( event )
-            
-            if key in ( wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER ):
-                
-                self._DoOK()
-                
-            else:
-                
-                event.Skip()
-                
-            
-        
-        def EventOK( self, event ):
-            
-            self._DoOK()
-            
-        
-    
 class DialogInputLocalBooruShare( Dialog ):
     
     def __init__( self, parent, share_key, name, text, timeout, hashes, new_share = False ):
@@ -676,7 +450,7 @@ class DialogInputLocalBooruShare( Dialog ):
             elif time_left < 60 * 60 * 24 * 7: time_value = 60 * 60 
             else: time_value = 60 * 60 * 24
             
-            self._timeout_number.SetValue( time_left / time_value )
+            self._timeout_number.SetValue( time_left // time_value )
             
             self._timeout_multiplier.SelectClientData( time_value )
             
@@ -740,18 +514,25 @@ class DialogInputLocalBooruShare( Dialog ):
     
     def EventCopyExternalShareURL( self, event ):
         
-        self._service = HG.client_controller.services_manager.GetService( CC.LOCAL_BOORU_SERVICE_KEY )
+        internal_port = self._service.GetPort()
         
-        external_ip = HydrusNATPunch.GetExternalIP() # eventually check for optional host replacement here
-        
-        external_port = self._service.GetUPnPPort()
-        
-        if external_port is None:
+        if internal_port is None:
             
-            external_port = self._service.GetPort()
+            wx.MessageBox( 'The local booru is not currently running!' )
             
         
-        url = 'http://' + external_ip + ':' + HydrusData.ToUnicode( external_port ) + '/gallery?share_key=' + self._share_key.encode( 'hex' )
+        try:
+            
+            url = self._service.GetExternalShareURL( self._share_key )
+            
+        except Exception as e:
+            
+            HydrusData.ShowException( e )
+            
+            wx.MessageBox( 'Unfortunately, could not generate an external URL: {}'.format( e ) )
+            
+            return
+            
         
         HG.client_controller.pub( 'clipboard', 'text', url )
         
@@ -764,7 +545,7 @@ class DialogInputLocalBooruShare( Dialog ):
         
         internal_port = self._service.GetPort()
         
-        url = 'http://' + internal_ip + ':' + str( internal_port ) + '/gallery?share_key=' + self._share_key.encode( 'hex' )
+        url = 'http://' + internal_ip + ':' + str( internal_port ) + '/gallery?share_key=' + self._share_key.hex()
         
         HG.client_controller.pub( 'clipboard', 'text', url )
         
@@ -805,9 +586,11 @@ class FrameInputLocalFiles( wx.Frame ):
         
         self.SetDropTarget( ClientDragDrop.FileDropTarget( self, filenames_callable = self._AddPathsToList ) )
         
-        listctrl_panel = ClientGUIListCtrl.SaneListCtrlPanel( self )
+        listctrl_panel = ClientGUIListCtrl.BetterListCtrlPanel( self )
         
-        self._paths_list = ClientGUIListCtrl.SaneListCtrl( listctrl_panel, 120, [ ( 'path', -1 ), ( 'guessed mime', 110 ), ( 'size', 60 ) ], delete_key_callback = self.RemovePaths )
+        columns = [ ( '#', 4 ), ( 'path', -1 ), ( 'guessed mime', 16 ), ( 'size', 10 ) ]
+        
+        self._paths_list = ClientGUIListCtrl.BetterListCtrl( listctrl_panel, 'input_local_files', 12, 36, columns, self._ConvertListCtrlDataToTuple, delete_key_callback = self.RemovePaths )
         
         listctrl_panel.SetListCtrl( self._paths_list )
         
@@ -895,15 +678,14 @@ class FrameInputLocalFiles( wx.Frame ):
         
         self._lock = threading.Lock()
         
-        self._current_paths = []
-        self._current_paths_set = set()
+        self._current_path_data = {}
         
         self._job_key = ClientThreading.JobKey()
         
-        self._unparsed_paths_queue = Queue.Queue()
+        self._unparsed_paths_queue = queue.Queue()
         self._currently_parsing = threading.Event()
         self._work_to_do = threading.Event()
-        self._parsed_path_queue = Queue.Queue()
+        self._parsed_path_queue = queue.Queue()
         self._pause_event = threading.Event()
         self._cancel_event = threading.Event()
         
@@ -915,6 +697,8 @@ class FrameInputLocalFiles( wx.Frame ):
             
         
         self.Show()
+        
+        self.Bind( wx.EVT_CHAR_HOOK, self.EventCharHook )
         
         HG.client_controller.gui.RegisterUIUpdateWindow( self )
         
@@ -932,9 +716,21 @@ class FrameInputLocalFiles( wx.Frame ):
             return
             
         
-        paths = [ HydrusData.ToUnicode( path ) for path in paths ]
-        
         self._unparsed_paths_queue.put( paths )
+        
+    
+    def _ConvertListCtrlDataToTuple( self, path ):
+        
+        ( index, mime, size ) = self._current_path_data[ path ]
+        
+        pretty_index = HydrusData.ToHumanInt( index )
+        pretty_mime = HC.mime_string_lookup[ mime ]
+        pretty_size = HydrusData.ToHumanBytes( size )
+        
+        display_tuple = ( pretty_index, path, pretty_mime, pretty_size )
+        sort_tuple = ( index, path, pretty_mime, size )
+        
+        return ( display_tuple, sort_tuple )
         
     
     def _TidyUp( self ):
@@ -948,7 +744,7 @@ class FrameInputLocalFiles( wx.Frame ):
             
             if dlg.ShowModal() == wx.ID_OK:
                 
-                path = HydrusData.ToUnicode( dlg.GetPath() )
+                path = dlg.GetPath()
                 
                 self._AddPathsToList( ( path, ) )
                 
@@ -961,7 +757,7 @@ class FrameInputLocalFiles( wx.Frame ):
             
             if dlg.ShowModal() == wx.ID_OK:
                 
-                paths = [ HydrusData.ToUnicode( path ) for path in dlg.GetPaths() ]
+                paths = dlg.GetPaths()
                 
                 self._AddPathsToList( paths )
                 
@@ -973,6 +769,22 @@ class FrameInputLocalFiles( wx.Frame ):
         self._TidyUp()
         
         self.Close()
+        
+    
+    def EventCharHook( self, event ):
+        
+        ( modifier, key ) = ClientGUIShortcuts.ConvertKeyEventToSimpleTuple( event )
+        
+        if key == wx.WXK_ESCAPE:
+            
+            self._TidyUp()
+            
+            self.Close()
+            
+        else:
+            
+            event.Skip()
+            
         
     
     def EventDeleteAfterSuccessCheck( self, event ):
@@ -991,15 +803,17 @@ class FrameInputLocalFiles( wx.Frame ):
         
         self._TidyUp()
         
-        if len( self._current_paths ) > 0:
+        paths = self._paths_list.GetData()
+        
+        if len( paths ) > 0:
             
             file_import_options = self._file_import_options.GetValue()
             
-            paths_to_tags = {}
+            paths_to_service_keys_to_tags = collections.defaultdict( ClientTags.ServiceKeysToTags )
             
             delete_after_success = self._delete_after_success.GetValue()
             
-            HG.client_controller.pub( 'new_hdd_import', self._current_paths, file_import_options, paths_to_tags, delete_after_success )
+            HG.client_controller.pub( 'new_hdd_import', paths, file_import_options, paths_to_service_keys_to_tags, delete_after_success )
             
         
         self.Close()
@@ -1007,23 +821,25 @@ class FrameInputLocalFiles( wx.Frame ):
     
     def EventTags( self, event ):
         
-        if len( self._current_paths ) > 0:
+        paths = self._paths_list.GetData()
+        
+        if len( paths ) > 0:
             
             file_import_options = self._file_import_options.GetValue()
             
             with ClientGUITopLevelWindows.DialogEdit( self, 'filename tagging', frame_key = 'local_import_filename_tagging' ) as dlg:
                 
-                panel = ClientGUIImport.EditLocalImportFilenameTaggingPanel( dlg, self._current_paths )
+                panel = ClientGUIImport.EditLocalImportFilenameTaggingPanel( dlg, paths )
                 
                 dlg.SetPanel( panel )
                 
                 if dlg.ShowModal() == wx.ID_OK:
                     
-                    paths_to_tags = panel.GetValue()
+                    paths_to_service_keys_to_tags = panel.GetValue()
                     
                     delete_after_success = self._delete_after_success.GetValue()
                     
-                    HG.client_controller.pub( 'new_hdd_import', self._current_paths, file_import_options, paths_to_tags, delete_after_success )
+                    HG.client_controller.pub( 'new_hdd_import', paths, file_import_options, paths_to_service_keys_to_tags, delete_after_success )
                     
                     self.Close()
                     
@@ -1054,10 +870,29 @@ class FrameInputLocalFiles( wx.Frame ):
             
             if dlg.ShowModal() == wx.ID_YES:
                 
-                self._paths_list.RemoveAllSelected()
+                paths_to_delete = self._paths_list.GetData( only_selected = True )
                 
-                self._current_paths = [ row[0] for row in self._paths_list.GetClientData() ]
-                self._current_paths_set = set( self._current_paths )
+                self._paths_list.DeleteSelected()
+                
+                for path in paths_to_delete:
+                    
+                    del self._current_path_data[ path ]
+                    
+                
+                flat_path_data = [ ( index, path, mime, size ) for ( path, ( index, mime, size ) ) in self._current_path_data.items() ]
+                
+                flat_path_data.sort()
+                
+                new_index = 1
+                
+                for ( old_index, path, mime, size ) in flat_path_data:
+                    
+                    self._current_path_data[ path ] = ( new_index, mime, size )
+                    
+                    new_index += 1
+                    
+                
+                self._paths_list.UpdateDatas()
                 
             
         
@@ -1156,7 +991,7 @@ class FrameInputLocalFiles( wx.Frame ):
                         
                         unparsed_paths_queue.get( block = False )
                         
-                    except Queue.Empty:
+                    except queue.Empty:
                         
                         pass
                         
@@ -1189,11 +1024,11 @@ class FrameInputLocalFiles( wx.Frame ):
                     
                     raw_paths = unparsed_paths_queue.get( block = False )
                     
-                    paths = ClientFiles.GetAllPaths( raw_paths, do_human_sort = do_human_sort ) # convert any dirs to subpaths
+                    paths = ClientFiles.GetAllFilePaths( raw_paths, do_human_sort = do_human_sort ) # convert any dirs to subpaths
                     
                     unparsed_paths.extend( paths )
                     
-                except Queue.Empty:
+                except queue.Empty:
                     
                     pass
                     
@@ -1207,11 +1042,11 @@ class FrameInputLocalFiles( wx.Frame ):
                     
                     raw_paths = unparsed_paths_queue.get( timeout = 5 )
                     
-                    paths = ClientFiles.GetAllPaths( raw_paths, do_human_sort = do_human_sort ) # convert any dirs to subpaths
+                    paths = ClientFiles.GetAllFilePaths( raw_paths, do_human_sort = do_human_sort ) # convert any dirs to subpaths
                     
                     unparsed_paths.extend( paths )
                     
-                except Queue.Empty:
+                except queue.Empty:
                     
                     pass
                     
@@ -1273,20 +1108,25 @@ class FrameInputLocalFiles( wx.Frame ):
     
     def TIMERUIUpdate( self ):
         
+        good_paths = list()
+        
         while not self._parsed_path_queue.empty():
             
             ( path, mime, size ) = self._parsed_path_queue.get()
             
-            pretty_mime = HC.mime_string_lookup[ mime ]
-            pretty_size = HydrusData.ConvertIntToBytes( size )
+            if not self._paths_list.HasData( path ):
+                
+                good_paths.append( path )
+                
+                index = len( self._current_path_data ) + 1
+                
+                self._current_path_data[ path ] = ( index, mime, size )
+                
             
-            if path not in self._current_paths_set:
-                
-                self._current_paths_set.add( path )
-                self._current_paths.append( path )
-                
-                self._paths_list.Append( ( path, pretty_mime, pretty_size ), ( path, mime, size ) )
-                
+        
+        if len( good_paths ) > 0:
+            
+            self._paths_list.AddDatas( good_paths )
             
         
         #
@@ -1321,11 +1161,11 @@ class FrameInputLocalFiles( wx.Frame ):
         
         if paused:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._progress_pause, CC.GlobalBMPs.play )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._progress_pause, CC.GlobalBMPs.play )
             
         else:
             
-            ClientGUICommon.SetBitmapButtonBitmap( self._progress_pause, CC.GlobalBMPs.pause )
+            ClientGUIFunctions.SetBitmapButtonBitmap( self._progress_pause, CC.GlobalBMPs.pause )
             
         
     
@@ -1401,13 +1241,13 @@ class DialogInputNamespaceRegex( Dialog ):
         
         try:
             
-            re.compile( regex, flags = re.UNICODE )
+            re.compile( regex )
             
         except Exception as e:
             
             text = 'That regex would not compile!'
             text += os.linesep * 2
-            text += HydrusData.ToUnicode( e )
+            text += str( e )
             
             wx.MessageBox( text )
             
@@ -1426,84 +1266,6 @@ class DialogInputNamespaceRegex( Dialog ):
         return ( namespace, regex )
         
     
-class DialogInputNewFormField( Dialog ):
-    
-    def __init__( self, parent, form_field = None ):
-        
-        Dialog.__init__( self, parent, 'configure form field' )
-        
-        if form_field is None: ( name, field_type, default, editable ) = ( '', CC.FIELD_TEXT, '', True )
-        else: ( name, field_type, default, editable ) = form_field
-        
-        self._name = wx.TextCtrl( self )
-        
-        self._type = wx.Choice( self )
-        
-        self._default = wx.TextCtrl( self )
-        
-        self._editable = wx.CheckBox( self )
-        
-        self._ok = wx.Button( self, id = wx.ID_OK, label = 'OK' )
-        self._ok.SetForegroundColour( ( 0, 128, 0 ) )
-        
-        self._cancel = wx.Button( self, id = wx.ID_CANCEL, label = 'Cancel' )   
-        self._cancel.SetForegroundColour( ( 128, 0, 0 ) )
-        
-        #
-        
-        self._name.SetValue( name )
-        
-        for temp_type in CC.FIELDS: self._type.Append( CC.field_string_lookup[ temp_type ], temp_type )
-        self._type.Select( field_type )
-        
-        self._default.SetValue( default )
-        
-        self._editable.SetValue( editable )
-        
-        #
-        
-        
-        rows = []
-        
-        rows.append( ( 'name: ', self._name ) )
-        rows.append( ( 'type: ', self._type ) )
-        rows.append( ( 'default: ', self._default ) )
-        rows.append( ( 'editable: ', self._editable ) )
-        
-        gridbox = ClientGUICommon.WrapInGrid( self, rows )
-        
-        b_box = wx.BoxSizer( wx.HORIZONTAL )
-        
-        b_box.Add( self._ok, CC.FLAGS_VCENTER )
-        b_box.Add( self._cancel, CC.FLAGS_VCENTER )
-        
-        vbox = wx.BoxSizer( wx.VERTICAL )
-        
-        vbox.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
-        vbox.Add( b_box, CC.FLAGS_BUTTON_SIZER )
-        
-        self.SetSizer( vbox )
-        
-        ( x, y ) = self.GetEffectiveMinSize()
-        
-        self.SetInitialSize( ( x, y ) )
-        
-        wx.CallAfter( self._ok.SetFocus )
-        
-    
-    def GetFormField( self ):
-        
-        name = self._name.GetValue()
-        
-        field_type = self._type.GetClientData( self._type.GetSelection() )
-        
-        default = self._default.GetValue()
-        
-        editable = self._editable.GetValue()
-        
-        return ( name, field_type, default, editable )
-        
-    
 class DialogInputTags( Dialog ):
     
     def __init__( self, parent, service_key, tags, message = '' ):
@@ -1516,9 +1278,9 @@ class DialogInputTags( Dialog ):
         
         expand_parents = True
         
-        self._tag_box = ClientGUIACDropdown.AutoCompleteDropdownTagsWrite( self, self.EnterTags, expand_parents, CC.LOCAL_FILE_SERVICE_KEY, service_key, null_entry_callable = self.OK )
+        self._tag_box = ClientGUIACDropdown.AutoCompleteDropdownTagsWrite( self, self.EnterTags, expand_parents, CC.LOCAL_FILE_SERVICE_KEY, service_key, null_entry_callable = self.OK, show_paste_button = True )
         
-        self._ok = wx.Button( self, id= wx.ID_OK, label = 'OK' )
+        self._ok = ClientGUICommon.BetterButton( self, 'OK', self.EndModal, wx.ID_OK )
         self._ok.SetForegroundColour( ( 0, 128, 0 ) )
         
         self._cancel = wx.Button( self, id = wx.ID_CANCEL, label = 'Cancel' )
@@ -1559,7 +1321,7 @@ class DialogInputTags( Dialog ):
 
     def EnterTags( self, tags ):
         
-        tag_parents_manager = HG.client_controller.GetManager( 'tag_parents' )
+        tag_parents_manager = HG.client_controller.tag_parents_manager
         
         parents = set()
         
@@ -1603,7 +1365,7 @@ class DialogInputUPnPMapping( Dialog ):
         self._description = wx.TextCtrl( self )
         self._duration = wx.SpinCtrl( self, min = 0, max = 86400 )
         
-        self._ok = wx.Button( self, id = wx.ID_OK, label = 'OK' )
+        self._ok = ClientGUICommon.BetterButton( self, 'OK', self.EndModal, wx.ID_OK )
         self._ok.SetForegroundColour( ( 0, 128, 0 ) )
         
         self._cancel = wx.Button( self, id = wx.ID_CANCEL, label = 'Cancel' )
@@ -1723,9 +1485,12 @@ class DialogModifyAccounts( Dialog ):
             
             response = self._service.Request( HC.GET, 'account_info', { 'subject_identifier' : subject_identifier } )
             
-            subject_string = HydrusData.ToUnicode( response[ 'account_info' ] )
+            subject_string = str( response[ 'account_info' ] )
             
-        else: subject_string = 'modifying ' + HydrusData.ToHumanInt( len( self._subject_identifiers ) ) + ' accounts'
+        else:
+            
+            subject_string = 'modifying ' + HydrusData.ToHumanInt( len( self._subject_identifiers ) ) + ' accounts'
+            
         
         self._subject_text.SetLabelText( subject_string )
         
@@ -1814,7 +1579,7 @@ class DialogModifyAccounts( Dialog ):
             
             account_info = response[ 'account_info' ]
             
-            self._subject_text.SetLabelText( HydrusData.ToUnicode( account_info ) )
+            self._subject_text.SetLabelText( str( account_info ) )
             
         
         if len( self._subject_identifiers ) > 1: wx.MessageBox( 'Done!' )
@@ -1878,10 +1643,10 @@ class DialogSelectFromURLTree( Dialog ):
         
         self._tree = wx.lib.agw.customtreectrl.CustomTreeCtrl( self, agwStyle = agwStyle )
         
-        self._ok = wx.Button( self, id = wx.ID_OK )
+        self._ok = ClientGUICommon.BetterButton( self, 'OK', self.EndModal, wx.ID_OK )
         self._ok.SetForegroundColour( ( 0, 128, 0 ) )
         
-        self._cancel = wx.Button( self, id = wx.ID_CANCEL )
+        self._cancel = wx.Button( self, id = wx.ID_CANCEL, label = 'Cancel' )
         self._cancel.SetForegroundColour( ( 128, 0, 0 ) )
         
         #
@@ -1971,7 +1736,7 @@ class DialogSelectFromURLTree( Dialog ):
     
     def _RenderItemName( self, name, size ):
         
-        return name + ' - ' + HydrusData.ConvertIntToBytes( size )
+        return name + ' - ' + HydrusData.ToHumanBytes( size )
         
     
     def GetURLs( self ):
@@ -1983,14 +1748,11 @@ class DialogSelectFromURLTree( Dialog ):
         return urls
         
     
-    
 class DialogSelectImageboard( Dialog ):
     
     def __init__( self, parent ):
         
         Dialog.__init__( self, parent, 'select imageboard' )
-        
-        self._hidden_cancel = wx.Button( self, id = wx.ID_CANCEL, size = ( 0, 0 ) )
         
         self._tree = wx.TreeCtrl( self )
         self._tree.Bind( wx.EVT_TREE_ITEM_ACTIVATED, self.EventActivate )
@@ -2001,7 +1763,7 @@ class DialogSelectImageboard( Dialog ):
         
         root_item = self._tree.AddRoot( 'all sites' )
         
-        for ( site, imageboards ) in all_imageboards.items():
+        for ( site, imageboards ) in list(all_imageboards.items()):
             
             site_item = self._tree.AppendItem( root_item, site )
             
@@ -2043,85 +1805,6 @@ class DialogSelectImageboard( Dialog ):
     
     def GetImageboard( self ): return self._tree.GetItemData( self._tree.GetSelection() ).GetData()
     
-class DialogSelectYoutubeURL( Dialog ):
-    
-    def __init__( self, parent, info ):
-        
-        Dialog.__init__( self, parent, 'choose youtube format' )
-        
-        self._info = info
-        
-        self._urls = ClientGUIListCtrl.SaneListCtrl( self, 360, [ ( 'format', 150 ), ( 'resolution', -1 ) ] )
-        self._urls.Bind( wx.EVT_LIST_ITEM_ACTIVATED, self.EventOK )
-        
-        self._urls.SetMinSize( ( 360, 200 ) )
-        
-        self._ok = wx.Button( self, wx.ID_OK, label = 'ok' )
-        self._ok.Bind( wx.EVT_BUTTON, self.EventOK )
-        self._ok.SetForegroundColour( ( 0, 128, 0 ) )
-        
-        self._cancel = wx.Button( self, id = wx.ID_CANCEL, label = 'cancel' )
-        self._cancel.SetForegroundColour( ( 128, 0, 0 ) )
-        
-        #
-        
-        keys = list( self._info.keys() )
-        
-        keys.sort()
-        
-        for ( extension, resolution ) in keys:
-            
-            self._urls.Append( ( extension, resolution ), ( extension, resolution ) )
-            
-        
-        #self._urls.SortListItems( 0 )
-        
-        #
-        
-        buttons = wx.BoxSizer( wx.HORIZONTAL )
-        
-        buttons.Add( self._ok, CC.FLAGS_VCENTER )
-        buttons.Add( self._cancel, CC.FLAGS_VCENTER )
-        
-        vbox = wx.BoxSizer( wx.VERTICAL )
-        
-        vbox.Add( self._urls, CC.FLAGS_EXPAND_BOTH_WAYS )
-        vbox.Add( buttons, CC.FLAGS_BUTTON_SIZER )
-        
-        self.SetSizer( vbox )
-        
-        ( x, y ) = self.GetEffectiveMinSize()
-        
-        self.SetInitialSize( ( x, y ) )
-        
-        wx.CallAfter( self._ok.SetFocus )
-        
-    
-    def EventOK( self, event ):
-        
-        indices = self._urls.GetAllSelected()
-        
-        if len( indices ) > 0:
-            
-            for index in indices:
-                
-                ( extension, resolution ) = self._urls.GetClientData( index )
-                
-                ( url, title ) = self._info[ ( extension, resolution ) ]
-                
-                url_string = title + ' ' + resolution + ' ' + extension
-                
-                job_key = ClientThreading.JobKey( pausable = True, cancellable = True )
-                
-                HG.client_controller.CallToThread( ClientImporting.THREADDownloadURL, job_key, url, url_string )
-                
-                HG.client_controller.pub( 'message', job_key )
-                
-            
-        
-        self.EndModal( wx.ID_OK )
-        
-    
 class DialogTextEntry( Dialog ):
     
     def __init__( self, parent, message, default = '', allow_blank = False, suggestions = None, max_chars = None ):
@@ -2153,7 +1836,7 @@ class DialogTextEntry( Dialog ):
             self._text.SetMaxLength( self._max_chars )
             
         
-        self._ok = wx.Button( self, id = wx.ID_OK, label = 'ok' )
+        self._ok = ClientGUICommon.BetterButton( self, 'ok', self.EndModal, wx.ID_OK )
         self._ok.SetForegroundColour( ( 0, 128, 0 ) )
         
         self._cancel = wx.Button( self, id = wx.ID_CANCEL, label = 'cancel' )
@@ -2251,15 +1934,13 @@ class DialogYesNo( Dialog ):
         
         Dialog.__init__( self, parent, title, position = 'center' )
         
-        self._yes = wx.Button( self, id = wx.ID_YES )
+        self._yes = ClientGUICommon.BetterButton( self, yes_label, self.EndModal, wx.ID_YES )
         self._yes.SetForegroundColour( ( 0, 128, 0 ) )
         self._yes.SetLabelText( yes_label )
         
-        self._no = wx.Button( self, id = wx.ID_NO )
+        self._no = ClientGUICommon.BetterButton( self, no_label, self.EndModal, wx.ID_NO )
         self._no.SetForegroundColour( ( 128, 0, 0 ) )
         self._no.SetLabelText( no_label )
-        
-        self._hidden_cancel = wx.Button( self, id = wx.ID_CANCEL, size = ( 0, 0 ) )
         
         #
         
@@ -2311,11 +1992,8 @@ class DialogYesYesNo( Dialog ):
             yes_buttons.append( yes_button )
             
         
-        self._no = wx.Button( self, id = wx.ID_NO )
+        self._no = ClientGUICommon.BetterButton( self, no_label, self.EndModal, wx.ID_NO )
         self._no.SetForegroundColour( ( 128, 0, 0 ) )
-        self._no.SetLabelText( no_label )
-        
-        self._hidden_cancel = wx.Button( self, id = wx.ID_CANCEL, size = ( 0, 0 ) )
         
         #
         

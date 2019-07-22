@@ -1,31 +1,31 @@
-import HydrusConstants as HC
-import ClientConstants as CC
-import ClientData
-import ClientGUICommon
-import ClientGUIDialogs
-import ClientGUIManagement
-import ClientGUIMedia
-import ClientGUIMenus
-import ClientGUICanvas
-import ClientDownloading
-import ClientSearch
-import ClientGUIShortcuts
-import ClientThreading
+from . import HydrusConstants as HC
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientGUIDialogs
+from . import ClientGUIFunctions
+from . import ClientGUIManagement
+from . import ClientGUIMedia
+from . import ClientGUIMenus
+from . import ClientGUICanvas
+from . import ClientDownloading
+from . import ClientSearch
+from . import ClientGUIShortcuts
+from . import ClientThreading
 import collections
 import hashlib
-import HydrusData
-import HydrusExceptions
-import HydrusSerialisable
-import HydrusThreading
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusSerialisable
+from . import HydrusThreading
 import inspect
 import os
 import sys
 import time
 import traceback
 import wx
-import HydrusGlobals as HG
+from . import HydrusGlobals as HG
 
-USER_PAGE_NAME_PREFIX = '[USER]'
+RESERVED_SESSION_NAMES = { '', 'just a blank page', 'last session', 'exit session' }
 
 class DialogPageChooser( ClientGUIDialogs.Dialog ):
     
@@ -218,7 +218,11 @@ class DialogPageChooser( ClientGUIDialogs.Dialog ):
             
             entries.append( ( 'page_query', CC.LOCAL_FILE_SERVICE_KEY ) )
             entries.append( ( 'page_query', CC.TRASH_SERVICE_KEY ) )
-            entries.append( ( 'page_query', CC.COMBINED_LOCAL_FILE_SERVICE_KEY ) )
+            
+            if HG.client_controller.new_options.GetBoolean( 'advanced_mode' ):
+                
+                entries.append( ( 'page_query', CC.COMBINED_LOCAL_FILE_SERVICE_KEY ) )
+                
             
             for service in self._services:
                 
@@ -411,17 +415,21 @@ class Page( wx.SplitterWindow ):
         
         self._media_panel.ClearPageKey()
         
+        collect_by = self._management_panel.GetCollectBy()
+        
+        if collect_by != []:
+            
+            new_panel.Collect( self._page_key, collect_by )
+            
+            sort_by = self._management_panel.GetSortBy()
+            
+            new_panel.Sort( self._page_key, sort_by )
+            
+        
         self.ReplaceWindow( self._media_panel, new_panel )
         
         self._media_panel.DestroyLater()
         
-        # old messed-up way of doing it
-        '''
-        self._media_panel.Hide()
-        
-        # If this is a CallAfter, OS X segfaults on refresh jej
-        self._controller.CallLaterWXSafe( self._media_panel, 0.5, self._media_panel.Destroy )
-        '''
         self._media_panel = new_panel
         
         self._controller.pub( 'refresh_page_name', self._page_key )
@@ -432,9 +440,18 @@ class Page( wx.SplitterWindow ):
         self._management_panel.CheckAbleToClose()
         
     
+    def CleanBeforeClose( self ):
+        
+        self._management_panel.CleanBeforeClose()
+        
+        self._controller.pub( 'set_focus', self._page_key, None )
+        
+    
     def CleanBeforeDestroy( self ):
         
         self._management_panel.CleanBeforeDestroy()
+        
+        self._preview_panel.CleanBeforeDestroy()
         
         self._controller.ReleasePageKey( self._page_key )
         
@@ -453,20 +470,6 @@ class Page( wx.SplitterWindow ):
         self._controller.pub( 'set_focus', self._page_key, None )
         
     
-    def GetDisplayName( self ):
-        
-        name = self._management_controller.GetPageName()
-        
-        if name.startswith( USER_PAGE_NAME_PREFIX ):
-            
-            return name.replace( USER_PAGE_NAME_PREFIX, '', 1 )
-            
-        else:
-            
-            return name
-            
-        
-    
     def GetHashes( self ):
         
         if self._initialised:
@@ -482,6 +485,11 @@ class Page( wx.SplitterWindow ):
     def GetManagementController( self ):
         
         return self._management_controller
+        
+    
+    def GetManagementPanel( self ):
+        
+        return self._management_panel
         
     
     # used by autocomplete
@@ -529,6 +537,18 @@ class Page( wx.SplitterWindow ):
     def GetPageKeys( self ):
         
         return { self._page_key }
+        
+    
+    def GetPageInfoDict( self, is_selected = False ):
+        
+        root = {}
+        
+        root[ 'name' ] = self.GetName()
+        root[ 'page_key' ] = self._page_key.hex()
+        root[ 'page_type' ] = self._management_controller.GetType()
+        root[ 'focused' ] = is_selected
+        
+        return root
         
     
     def GetPrettyStatus( self ):
@@ -594,11 +614,6 @@ class Page( wx.SplitterWindow ):
         self._media_panel.PageShown()
         
     
-    def PrepareToHide( self ):
-        
-        self._controller.pub( 'set_focus', self._page_key, None )
-        
-    
     def RefreshQuery( self ):
         
         if self._initialised:
@@ -642,12 +657,7 @@ class Page( wx.SplitterWindow ):
         wx.CallAfter( self._management_panel.Start ) # importand this is callafter, so it happens after a heavy session load is done
         
     
-    def SetName( self, name, from_user = False ):
-        
-        if from_user:
-            
-            name = USER_PAGE_NAME_PREFIX + name
-            
+    def SetName( self, name ):
         
         return self._management_controller.SetPageName( name )
         
@@ -726,7 +736,7 @@ class Page( wx.SplitterWindow ):
             
         except HydrusExceptions.VetoException as e:
             
-            reason = HydrusData.ToUnicode( e )
+            reason = str( e )
             
             with ClientGUIDialogs.DialogYesNo( self, reason + ' Are you sure you want to close it?' ) as dlg:
                 
@@ -768,14 +778,14 @@ class Page( wx.SplitterWindow ):
             
             initial_media_results.extend( more_media_results )
             
-            status = u'Loading initial files\u2026 ' + HydrusData.ConvertValueRangeToPrettyString( len( initial_media_results ), len( initial_hashes ) )
+            status = 'Loading initial files\u2026 ' + HydrusData.ConvertValueRangeToPrettyString( len( initial_media_results ), len( initial_hashes ) )
             
             wx.CallAfter( wx_code_status, status )
             
         
         hashes_to_media_results = { media_result.GetHash() : media_result for media_result in initial_media_results }
         
-        sorted_initial_media_results = [ hashes_to_media_results[ hash ] for hash in initial_hashes ]
+        sorted_initial_media_results = [ hashes_to_media_results[ hash ] for hash in initial_hashes if hash in hashes_to_media_results ]
         
         wx.CallAfter( wx_code_publish, sorted_initial_media_results )
         
@@ -911,7 +921,7 @@ class PagesNotebook( wx.Notebook ):
                 
             
         
-        page.PrepareToHide()
+        page.CleanBeforeClose()
         
         page_key = page.GetPageKey()
         
@@ -1044,7 +1054,7 @@ class PagesNotebook( wx.Notebook ):
             
         else:
             
-            ( tab_index, flags ) = ClientGUICommon.NotebookScreenToHitTest( self, screen_position )
+            ( tab_index, flags ) = ClientGUIFunctions.NotebookScreenToHitTest( self, screen_position )
             
             if tab_index != wx.NOT_FOUND:
                 
@@ -1077,32 +1087,11 @@ class PagesNotebook( wx.Notebook ):
         return [ self.GetPage( i ) for i in range( self.GetPageCount() ) ]
         
     
-    def _GetPageFromPageKey( self, page_key ):
-        
-        for page in self._GetPages():
-            
-            if page.GetPageKey() == page_key:
-                
-                return page
-                
-            
-            if isinstance( page, PagesNotebook ):
-                
-                if page.HasPageKey( page_key ):
-                    
-                    return page._GetPageFromPageKey( page_key )
-                    
-                
-            
-        
-        return None
-        
-    
     def _GetPageFromName( self, page_name ):
         
         for page in self._GetPages():
             
-            if page.GetDisplayName() == page_name:
+            if page.GetName() == page_name:
                 
                 return page
                 
@@ -1160,7 +1149,7 @@ class PagesNotebook( wx.Notebook ):
         
         insertion_tab_index = min( insertion_tab_index, dest_notebook.GetPageCount() )
         
-        dest_notebook.InsertPage( insertion_tab_index, page, page.GetDisplayName(), select = follow_dropped_page )
+        dest_notebook.InsertPage( insertion_tab_index, page, page.GetName(), select = follow_dropped_page )
         
         if follow_dropped_page:
             
@@ -1185,38 +1174,6 @@ class PagesNotebook( wx.Notebook ):
             
         
     
-    def _ShiftPage( self, page_index, delta = None, new_index = None ):
-        
-        new_page_index = page_index
-        
-        if delta is not None:
-            
-            new_page_index = page_index + delta
-            
-        
-        if new_index is not None:
-            
-            new_page_index = new_index
-            
-        
-        if new_page_index == page_index:
-            
-            return
-            
-        
-        if 0 <= new_page_index and new_page_index <= self.GetPageCount() - 1:
-            
-            page_is_selected = self.GetSelection() == page_index
-            
-            page = self.GetPage( page_index )
-            name = self.GetPageText( page_index )
-            
-            self.RemovePage( page_index )
-            
-            self.InsertPage( new_page_index, page, name, page_is_selected )
-            
-        
-    
     def _RefreshPageName( self, index ):
         
         if index == -1 or index > self.GetPageCount() - 1:
@@ -1234,13 +1191,13 @@ class PagesNotebook( wx.Notebook ):
         
         page = self.GetPage( index )
         
-        page_name = page.GetDisplayName()
+        page_name = page.GetName()
         
         page_name = page_name.replace( os.linesep, '' )
         
         if len( page_name ) > max_page_name_chars:
             
-            page_name = page_name[ : max_page_name_chars ] + u'\u2026'
+            page_name = page_name[ : max_page_name_chars ] + '\u2026'
             
         
         num_string = ''
@@ -1289,7 +1246,7 @@ class PagesNotebook( wx.Notebook ):
         
         page = self.GetPage( index )
         
-        current_name = page.GetDisplayName()
+        current_name = page.GetName()
         
         with ClientGUIDialogs.DialogTextEntry( self, 'Enter the new name.', default = current_name, allow_blank = False ) as dlg:
             
@@ -1297,7 +1254,7 @@ class PagesNotebook( wx.Notebook ):
                 
                 new_name = dlg.GetValue()
                 
-                page.SetName( new_name, from_user = True )
+                page.SetName( new_name )
                 
                 self._controller.pub( 'refresh_page_name', page.GetPageKey() )
                 
@@ -1342,9 +1299,41 @@ class PagesNotebook( wx.Notebook ):
             
         
     
+    def _ShiftPage( self, page_index, delta = None, new_index = None ):
+        
+        new_page_index = page_index
+        
+        if delta is not None:
+            
+            new_page_index = page_index + delta
+            
+        
+        if new_index is not None:
+            
+            new_page_index = new_index
+            
+        
+        if new_page_index == page_index:
+            
+            return
+            
+        
+        if 0 <= new_page_index and new_page_index <= self.GetPageCount() - 1:
+            
+            page_is_selected = self.GetSelection() == page_index
+            
+            page = self.GetPage( page_index )
+            name = self.GetPageText( page_index )
+            
+            self.RemovePage( page_index )
+            
+            self.InsertPage( new_page_index, page, name, page_is_selected )
+            
+        
+    
     def _ShowMenu( self, screen_position ):
         
-        ( tab_index, flags ) = ClientGUICommon.NotebookScreenToHitTest( self, screen_position )
+        ( tab_index, flags ) = ClientGUIFunctions.NotebookScreenToHitTest( self, screen_position )
         
         num_pages = self.GetPageCount()
         
@@ -1358,8 +1347,6 @@ class PagesNotebook( wx.Notebook ):
         can_go_right = tab_index < end_index
         
         click_over_page_of_pages = False
-        
-        existing_session_names = self._controller.Read( 'serialisable_names', HydrusSerialisable.SERIALISABLE_TYPE_GUI_SESSION )
         
         menu = wx.Menu()
         
@@ -1426,6 +1413,12 @@ class PagesNotebook( wx.Notebook ):
                     ClientGUIMenus.AppendMenuItem( self, menu, 'move to right end', 'Move this page all the way to the right.', self._ShiftPage, tab_index, new_index = end_index )
                     
                 
+                
+                ClientGUIMenus.AppendSeparator( menu )
+                
+                ClientGUIMenus.AppendMenuItem( self, menu, 'sort pages by most files first', 'Sort these pages according to how many files they appear to have.', self._SortPagesByFileCount, 'desc' )
+                ClientGUIMenus.AppendMenuItem( self, menu, 'sort pages by fewest files first', 'Sort these pages according to how few files they appear to have.', self._SortPagesByFileCount, 'asc' )
+                
             
             ClientGUIMenus.AppendSeparator( menu )
             
@@ -1443,6 +1436,8 @@ class PagesNotebook( wx.Notebook ):
                 ClientGUIMenus.AppendMenuItem( self, menu, 'refresh all this page\'s pages', 'Command every page below this one to refresh.', page.RefreshAllPages )
                 
             
+        
+        existing_session_names = self._controller.Read( 'serialisable_names', HydrusSerialisable.SERIALISABLE_TYPE_GUI_SESSION )
         
         if len( existing_session_names ) > 0 or click_over_page_of_pages:
             
@@ -1467,7 +1462,7 @@ class PagesNotebook( wx.Notebook ):
             
             for name in existing_session_names:
                 
-                if name == 'last session':
+                if name in RESERVED_SESSION_NAMES:
                     
                     continue
                     
@@ -1475,12 +1470,55 @@ class PagesNotebook( wx.Notebook ):
                 ClientGUIMenus.AppendMenuItem( self, submenu, name, 'Save this page of pages to the session.', page.SaveGUISession, name )
                 
             
-            ClientGUIMenus.AppendMenuItem( self, submenu, 'create a new session', 'Save this page of pages to the session.', page.SaveGUISession, suggested_name = page.GetDisplayName() )
+            ClientGUIMenus.AppendMenuItem( self, submenu, 'create a new session', 'Save this page of pages to the session.', page.SaveGUISession, suggested_name = page.GetName() )
             
             ClientGUIMenus.AppendMenu( menu, submenu, 'save this page of pages to a session' )
             
         
         self._controller.PopupMenu( self, menu )
+        
+    
+    def _SortPagesByFileCount( self, order ):
+        
+        ordered_pages = list( self.GetPages() )
+        
+        def key( page ):
+            
+            ( total_num_files, ( total_num_value, total_num_range ) ) = page.GetNumFileSummary()
+            
+            return ( total_num_files, total_num_range, total_num_value )
+            
+        
+        ordered_pages.sort( key = key )
+        
+        if order == 'desc':
+            
+            ordered_pages.reverse()
+            
+        
+        selected_page = self.GetCurrentPage()
+        
+        pages_to_names = {}
+        
+        for i in range( self.GetPageCount() ):
+            
+            page = self.GetPage( 0 )
+            
+            name = self.GetPageText( 0 )
+            
+            pages_to_names[ page ] = name
+            
+            self.RemovePage( 0 )
+            
+        
+        for page in ordered_pages:
+            
+            is_selected = page == selected_page
+            
+            name = pages_to_names[ page ]
+            
+            self.AddPage( page, name, select = is_selected )
+            
         
     
     def AppendGUISession( self, name, load_in_a_page_of_pages = True ):
@@ -1508,7 +1546,37 @@ class PagesNotebook( wx.Notebook ):
             destination = self
             
         
-        page_tuples = session.GetPages()
+        page_tuples = session.GetPageTuples()
+        
+        destination.AppendSessionPageTuples( page_tuples )
+        
+    
+    def AppendGUISessionBackup( self, name, timestamp, load_in_a_page_of_pages = True ):
+        
+        try:
+            
+            session = self._controller.Read( 'serialisable_named', HydrusSerialisable.SERIALISABLE_TYPE_GUI_SESSION, name, timestamp )
+            
+        except Exception as e:
+            
+            HydrusData.ShowText( 'While trying to load session ' + name + ' (ts ' + str( timestamp ) + ', this error happened:' )
+            HydrusData.ShowException( e )
+            
+            self.NewPageQuery( CC.LOCAL_FILE_SERVICE_KEY )
+            
+            return
+            
+        
+        if load_in_a_page_of_pages:
+            
+            destination = self.NewPagesNotebook( name = name, give_it_a_blank_page = False)
+            
+        else:
+            
+            destination = self
+            
+        
+        page_tuples = session.GetPageTuples()
         
         destination.AppendSessionPageTuples( page_tuples )
         
@@ -1578,6 +1646,14 @@ class PagesNotebook( wx.Notebook ):
         else:
             
             self._ChooseNewPage()
+            
+        
+    
+    def CleanBeforeClose( self ):
+        
+        for page in self._GetPages():
+            
+            page.CleanBeforeClose()
             
         
     
@@ -1682,7 +1758,7 @@ class PagesNotebook( wx.Notebook ):
             
             if flags & wx.NB_HITTEST_NOWHERE and flags & wx.NB_HITTEST_ONPAGE:
                 
-                screen_position = ClientGUICommon.ClientToScreen( self, position )
+                screen_position = ClientGUIFunctions.ClientToScreen( self, position )
                 
                 notebook = self._GetNotebookFromScreenPosition( screen_position )
                 
@@ -1708,7 +1784,7 @@ class PagesNotebook( wx.Notebook ):
     
     def EventMenu( self, event ):
         
-        screen_position = ClientGUICommon.ClientToScreen( self, event.GetPosition() )
+        screen_position = ClientGUIFunctions.ClientToScreen( self, event.GetPosition() )
         
         self._ShowMenu( screen_position )
         
@@ -1735,7 +1811,7 @@ class PagesNotebook( wx.Notebook ):
             
             if flags & wx.NB_HITTEST_NOWHERE and flags & wx.NB_HITTEST_ONPAGE:
                 
-                screen_position = ClientGUICommon.ClientToScreen( self, position )
+                screen_position = ClientGUIFunctions.ClientToScreen( self, position )
                 
                 notebook = self._GetNotebookFromScreenPosition( screen_position )
                 
@@ -1801,18 +1877,6 @@ class PagesNotebook( wx.Notebook ):
             
         
     
-    def GetDisplayName( self ):
-        
-        if self._name.startswith( USER_PAGE_NAME_PREFIX ):
-            
-            return self._name.replace( USER_PAGE_NAME_PREFIX, '', 1 )
-            
-        else:
-            
-            return self._name
-            
-        
-    
     def GetMediaPages( self, only_my_level = False ):
         
         return self._GetMediaPages( only_my_level )
@@ -1867,55 +1931,93 @@ class PagesNotebook( wx.Notebook ):
             
         
     
-    def GetOrMakeMultipleWatcherPage( self ):
+    def GetOrMakeMultipleWatcherPage( self, desired_page_name = None, desired_page_key = None, select_page = True ):
         
-        current_page = self.GetCurrentPage()
+        potential_watcher_pages = [ page for page in self._GetMediaPages( False ) if page.IsMultipleWatcherPage() ]
         
-        if current_page is not None and isinstance( current_page, Page ) and current_page.IsMultipleWatcherPage():
+        if desired_page_key is not None and desired_page_key in ( page.GetPageKey() for page in potential_watcher_pages ):
             
-            return current_page
+            potential_watcher_pages = [ page for page in potential_watcher_pages if page.GetPageKey() == desired_page_key ]
             
-        
-        for page in self._GetPages():
+        elif desired_page_name is not None:
             
-            if isinstance( page, PagesNotebook ):
-                
-                if page.HasMultipleWatcherPage():
-                    
-                    return page.GetOrMakeMultipleWatcherPage()
-                    
-                
-            elif page.IsMultipleWatcherPage():
-                
-                return page
-                
+            potential_watcher_pages = [ page for page in potential_watcher_pages if page.GetName() == desired_page_name ]
             
         
-        # import page does not exist
-        
-        return self.NewPageImportMultipleWatcher( on_deepest_notebook = True )
+        if len( potential_watcher_pages ) > 0:
+            
+            # ok, we can use an existing one. should we use the current?
+            
+            current_media_page = self.GetCurrentMediaPage()
+            
+            if current_media_page is not None and current_media_page in potential_watcher_pages:
+                
+                return current_media_page
+                
+            else:
+                
+                return potential_watcher_pages[0]
+                
+            
+        else:
+            
+            return self.NewPageImportMultipleWatcher( page_name = desired_page_name, on_deepest_notebook = True, select_page = select_page )
+            
         
     
-    def GetOrMakeURLImportPage( self ):
+    def GetOrMakeURLImportPage( self, desired_page_name = None, desired_page_key = None, select_page =  True ):
+        
+        potential_url_import_pages = [ page for page in self._GetMediaPages( False ) if page.IsURLImportPage() ]
+        
+        if desired_page_key is not None and desired_page_key in ( page.GetPageKey() for page in potential_url_import_pages ):
+            
+            potential_url_import_pages = [ page for page in potential_url_import_pages if page.GetPageKey() == desired_page_key ]
+            
+        elif desired_page_name is not None:
+            
+            potential_url_import_pages = [ page for page in potential_url_import_pages if page.GetName() == desired_page_name ]
+            
+        
+        if len( potential_url_import_pages ) > 0:
+            
+            # ok, we can use an existing one. should we use the current?
+            
+            current_media_page = self.GetCurrentMediaPage()
+            
+            if current_media_page is not None and current_media_page in potential_url_import_pages:
+                
+                return current_media_page
+                
+            else:
+                
+                return potential_url_import_pages[0]
+                
+            
+        else:
+            
+            return self.NewPageImportURLs( page_name = desired_page_name, on_deepest_notebook = True, select_page = select_page )
+            
+        
+    
+    def GetPageFromPageKey( self, page_key ):
         
         for page in self._GetPages():
             
-            if isinstance( page, PagesNotebook ):
-                
-                if page.HasURLImportPage():
-                    
-                    return page.GetOrMakeURLImportPage()
-                    
-                
-            elif page.IsURLImportPage():
+            if page.GetPageKey() == page_key:
                 
                 return page
                 
             
+            if isinstance( page, PagesNotebook ):
+                
+                if page.HasPageKey( page_key ):
+                    
+                    return page.GetPageFromPageKey( page_key )
+                    
+                
+            
         
-        # import page does not exist
-        
-        return self.NewPageImportURLs( on_deepest_notebook = True )
+        return None
         
     
     def GetPageKey( self ):
@@ -1935,6 +2037,32 @@ class PagesNotebook( wx.Notebook ):
         return page_keys
         
     
+    def GetPageInfoDict( self, is_selected = True ):
+        
+        current_page = self.GetCurrentPage()
+        
+        my_pages_list = []
+        
+        for page in self._GetPages():
+            
+            page_is_focused = is_selected and page == current_page
+            
+            page_info_dict = page.GetPageInfoDict( is_selected = is_selected )
+            
+            my_pages_list.append( page_info_dict )
+            
+        
+        root = {}
+        
+        root[ 'name' ] = self.GetName()
+        root[ 'page_key' ] = self._page_key.hex()
+        root[ 'page_type' ] = ClientGUIManagement.MANAGEMENT_TYPE_PAGE_OF_PAGES
+        root[ 'selected' ] = is_selected
+        root[ 'pages' ] = my_pages_list
+        
+        return root
+        
+    
     def GetPages( self ):
         
         return self._GetPages()
@@ -1952,6 +2080,52 @@ class PagesNotebook( wx.Notebook ):
             
         
         return HydrusData.ToHumanInt( self.GetPageCount() ) + ' pages, ' + num_string + ' files'
+        
+    
+    def GetTestAbleToCloseStatement( self ):
+        
+        count = collections.Counter()
+        
+        for page in self._GetMediaPages( False ):
+            
+            try:
+                
+                page.CheckAbleToClose()
+                
+            except HydrusExceptions.VetoException as e:
+                
+                reason = str( e )
+                
+                count[ reason ] += 1
+                
+            
+        
+        if len( count ) > 0:
+            
+            total_problems = sum( count.values() )
+            
+            message = ''
+            
+            for ( reason, c ) in list(count.items()):
+                
+                if c == 1:
+                    
+                    message = '1 page says: ' + reason
+                    
+                else:
+                    
+                    message = HydrusData.ToHumanInt( c ) + ' pages say:' + reason
+                    
+                
+                message += os.linesep
+                
+            
+            return message
+            
+        else:
+            
+            return None
+            
         
     
     def HasMediaPageName( self, page_name, only_my_level = False ):
@@ -2037,6 +2211,21 @@ class PagesNotebook( wx.Notebook ):
         return False
         
     
+    def IsMultipleWatcherPage( self ):
+        
+        return False
+        
+    
+    def IsImporter( self ):
+        
+        return False
+        
+    
+    def IsURLImportPage( self ):
+        
+        return False
+        
+    
     def LoadGUISession( self, name ):
         
         if self.GetPageCount() > 0:
@@ -2072,7 +2261,7 @@ class PagesNotebook( wx.Notebook ):
     
     def MediaDragAndDropDropped( self, source_page_key, hashes ):
         
-        source_page = self._GetPageFromPageKey( source_page_key )
+        source_page = self.GetPageFromPageKey( source_page_key )
         
         if source_page is None:
             
@@ -2085,7 +2274,7 @@ class PagesNotebook( wx.Notebook ):
         
         ( x, y ) = screen_position
         
-        ( tab_index, flags ) = ClientGUICommon.NotebookScreenToHitTest( dest_notebook, ( x, y ) )
+        ( tab_index, flags ) = ClientGUIFunctions.NotebookScreenToHitTest( dest_notebook, ( x, y ) )
         
         do_add = True
         # do chase - if we need to chase to an existing dest page on which we dropped files
@@ -2134,13 +2323,9 @@ class PagesNotebook( wx.Notebook ):
         
         if do_add:
             
-            unsorted_media_results = self._controller.Read( 'media_results', hashes )
+            media_results = self._controller.Read( 'media_results', hashes, sorted = True )
             
-            hashes_to_media_results = { media_result.GetHash() : media_result for media_result in unsorted_media_results }
-            
-            sorted_media_results = [ hashes_to_media_results[ hash ] for hash in hashes ]
-            
-            dest_page.GetMediaPanel().AddMediaResults( dest_page.GetPageKey(), sorted_media_results )
+            dest_page.GetMediaPanel().AddMediaResults( dest_page.GetPageKey(), media_results )
             
         else:
             
@@ -2156,6 +2341,11 @@ class PagesNotebook( wx.Notebook ):
         
     
     def NewPage( self, management_controller, initial_hashes = None, forced_insertion_index = None, on_deepest_notebook = False, select_page = True ):
+        
+        if self.GetTopLevelParent().IsIconized():
+            
+            return None
+            
         
         current_page = self.GetCurrentPage()
         
@@ -2190,7 +2380,7 @@ class PagesNotebook( wx.Notebook ):
                         
                     else:
                         
-                        return
+                        return None
                         
                     
                 
@@ -2229,7 +2419,7 @@ class PagesNotebook( wx.Notebook ):
             insertion_index = forced_insertion_index
             
         
-        page_name = page.GetDisplayName()
+        page_name = page.GetName()
         
         # in some unusual circumstances, this gets out of whack
         insertion_index = min( insertion_index, self.GetPageCount() )
@@ -2274,18 +2464,18 @@ class PagesNotebook( wx.Notebook ):
         return self.NewPage( management_controller, on_deepest_notebook = on_deepest_notebook )
         
     
-    def NewPageImportMultipleWatcher( self, url = None, on_deepest_notebook = False ):
+    def NewPageImportMultipleWatcher( self, page_name = None, url = None, on_deepest_notebook = False, select_page = True ):
         
-        management_controller = ClientGUIManagement.CreateManagementControllerImportMultipleWatcher( url )
+        management_controller = ClientGUIManagement.CreateManagementControllerImportMultipleWatcher( page_name = page_name, url = url )
         
-        return self.NewPage( management_controller, on_deepest_notebook = on_deepest_notebook )
+        return self.NewPage( management_controller, on_deepest_notebook = on_deepest_notebook, select_page = select_page )
         
     
-    def NewPageImportURLs( self, on_deepest_notebook = False ):
+    def NewPageImportURLs( self, page_name = None, on_deepest_notebook = False, select_page = True ):
         
-        management_controller = ClientGUIManagement.CreateManagementControllerImportURLs()
+        management_controller = ClientGUIManagement.CreateManagementControllerImportURLs( page_name = page_name )
         
-        return self.NewPage( management_controller, on_deepest_notebook = on_deepest_notebook )
+        return self.NewPage( management_controller, on_deepest_notebook = on_deepest_notebook, select_page = select_page )
         
     
     def NewPagePetitions( self, service_key, on_deepest_notebook = False ):
@@ -2343,9 +2533,7 @@ class PagesNotebook( wx.Notebook ):
         
         if on_deepest_notebook and isinstance( current_page, PagesNotebook ):
             
-            current_page.NewPagesNotebook( name = name, forced_insertion_index = forced_insertion_index, on_deepest_notebook = on_deepest_notebook, give_it_a_blank_page = give_it_a_blank_page )
-            
-            return
+            return current_page.NewPagesNotebook( name = name, forced_insertion_index = forced_insertion_index, on_deepest_notebook = on_deepest_notebook, give_it_a_blank_page = give_it_a_blank_page )
             
         
         self._controller.ResetIdleTimer()
@@ -2371,7 +2559,7 @@ class PagesNotebook( wx.Notebook ):
             insertion_index = forced_insertion_index
             
         
-        page_name = page.GetDisplayName()
+        page_name = page.GetName()
         
         self.InsertPage( insertion_index, page, page_name, select = select_page )
         
@@ -2397,7 +2585,7 @@ class PagesNotebook( wx.Notebook ):
                 
                 insert_index = min( index, self.GetPageCount() )
                 
-                name = page.GetDisplayName()
+                name = page.GetName()
                 
                 self.InsertPage( insert_index, page, name, True )
                 
@@ -2432,7 +2620,7 @@ class PagesNotebook( wx.Notebook ):
     
     def PageDragAndDropDropped( self, page_key ):
         
-        page = self._GetPageFromPageKey( page_key )
+        page = self.GetPageFromPageKey( page_key )
         
         if page is None:
             
@@ -2445,7 +2633,7 @@ class PagesNotebook( wx.Notebook ):
         
         ( x, y ) = screen_position
         
-        ( tab_index, flags ) = ClientGUICommon.NotebookScreenToHitTest( dest_notebook, ( x, y ) )
+        ( tab_index, flags ) = ClientGUIFunctions.NotebookScreenToHitTest( dest_notebook, ( x, y ) )
         
         if flags & wx.NB_HITTEST_ONPAGE:
             
@@ -2472,8 +2660,8 @@ class PagesNotebook( wx.Notebook ):
             
             EDGE_PADDING = 10
             
-            ( left_tab_index, gumpf ) = ClientGUICommon.NotebookScreenToHitTest( dest_notebook, ( x - EDGE_PADDING, y ) )
-            ( right_tab_index, gumpf ) = ClientGUICommon.NotebookScreenToHitTest( dest_notebook,  ( x + EDGE_PADDING, y ) )
+            ( left_tab_index, gumpf ) = ClientGUIFunctions.NotebookScreenToHitTest( dest_notebook, ( x - EDGE_PADDING, y ) )
+            ( right_tab_index, gumpf ) = ClientGUIFunctions.NotebookScreenToHitTest( dest_notebook,  ( x + EDGE_PADDING, y ) )
             
             landed_near_left_edge = left_tab_index != tab_index
             landed_near_right_edge = right_tab_index != tab_index
@@ -2524,7 +2712,7 @@ class PagesNotebook( wx.Notebook ):
                 
             
         
-        if dest_notebook == page or ClientGUICommon.IsWXAncestor( dest_notebook, page ):
+        if dest_notebook == page or ClientGUIFunctions.IsWXAncestor( dest_notebook, page ):
             
             # can't drop a notebook beneath itself!
             return
@@ -2545,12 +2733,11 @@ class PagesNotebook( wx.Notebook ):
         
         self._MovePage( page, dest_notebook, insertion_tab_index, follow_dropped_page )
         
-    
-    def PrepareToHide( self ):
+        self.Refresh()
         
-        for page in self._GetPages():
+        if dest_notebook != self:
             
-            page.PrepareToHide()
+            dest_notebook.Refresh()
             
         
     
@@ -2564,13 +2751,9 @@ class PagesNotebook( wx.Notebook ):
             
         else:
             
-            unsorted_media_results = self._controller.Read( 'media_results', hashes )
+            media_results = self._controller.Read( 'media_results', hashes, sorted = True )
             
-            hashes_to_media_results = { media_result.GetHash() : media_result for media_result in unsorted_media_results }
-            
-            sorted_media_results = [ hashes_to_media_results[ hash ] for hash in hashes ]
-            
-            page.GetMediaPanel().AddMediaResults( page.GetPageKey(), sorted_media_results )
+            page.GetMediaPanel().AddMediaResults( page.GetPageKey(), media_results )
             
         
         return page
@@ -2625,36 +2808,6 @@ class PagesNotebook( wx.Notebook ):
             
         
     
-    def RenamePage( self, page_key, name ):
-        
-        for page in self._GetPages():
-            
-            if page.GetPageKey() == page_key:
-                
-                existing_name = page.GetName()
-                
-                # this is the auto-renaming system. if the existing name is user-set, then don't overwrite
-                if not existing_name.startswith( USER_PAGE_NAME_PREFIX ):
-                    
-                    if existing_name != name:
-                        
-                        page.SetName( name )
-                        
-                        self.RefreshPageName( page_key )
-                        
-                    
-                
-                return
-                
-            elif isinstance( page, PagesNotebook ) and page.HasPageKey( page_key ):
-                
-                page.RenamePage( page_key, name )
-                
-                return
-                
-            
-        
-    
     def SaveGUISession( self, name = None, suggested_name = '' ):
         
         if name is None:
@@ -2667,7 +2820,7 @@ class PagesNotebook( wx.Notebook ):
                         
                         name = dlg.GetValue()
                         
-                        if name in ( '', 'just a blank page', 'last session' ):
+                        if name in RESERVED_SESSION_NAMES:
                             
                             wx.MessageBox( 'Sorry, you cannot have that name! Try another.' )
                             
@@ -2698,7 +2851,7 @@ class PagesNotebook( wx.Notebook ):
                     
                 
             
-        elif name != 'last session':
+        elif name not in RESERVED_SESSION_NAMES: # i.e. a human asked to do this
             
             message = 'Overwrite this session?'
             
@@ -2717,14 +2870,14 @@ class PagesNotebook( wx.Notebook ):
         
         for page in self._GetPages():
             
-            session.AddPage( page )
+            session.AddPageTuple( page )
             
         
         #
         
         if name == 'last session':
             
-            session_hash = hashlib.sha256( session.DumpToString() ).digest()
+            session_hash = hashlib.sha256( bytes( session.DumpToString(), 'utf-8' ) ).digest()
             
             if session_hash == self._last_last_session_hash:
                 
@@ -2739,12 +2892,7 @@ class PagesNotebook( wx.Notebook ):
         self._controller.pub( 'notify_new_sessions' )
         
     
-    def SetName( self, name, from_user = False ):
-        
-        if from_user:
-            
-            name = USER_PAGE_NAME_PREFIX + name
-            
+    def SetName( self, name ):
         
         self._name = name
         
@@ -2772,56 +2920,17 @@ class PagesNotebook( wx.Notebook ):
     
     def TestAbleToClose( self ):
         
-        count = collections.Counter()
+        statement = self.GetTestAbleToCloseStatement()
         
-        for page in self._GetMediaPages( False ):
+        if statement is not None:
             
-            try:
-                
-                page.CheckAbleToClose()
-                
-            except HydrusExceptions.VetoException as e:
-                
-                reason = HydrusData.ToUnicode( e )
-                
-                count[ reason ] += 1
-                
-            
-        
-        if len( count ) > 0:
-            
-            total_problems = sum( count.values() )
-            
-            message = ''
-            
-            for ( reason, c ) in count.items():
-                
-                if c == 1:
-                    
-                    message = '1 page says: ' + reason
-                    
-                else:
-                    
-                    message = HydrusData.ToHumanInt( c ) + ' pages say:' + reason
-                    
-                
-                message += os.linesep
-                
-            
-            message += os.linesep
-            
-            if total_problems == 1:
-                
-                message += 'Are you sure you want to close it?'
-                
-            else:
-                
-                message += 'Are you sure you want to close them?'
-                
+            message = 'Are you sure you want to close this page of pages?'
+            message += os.linesep * 2
+            message += statement
             
             with ClientGUIDialogs.DialogYesNo( self, message ) as dlg:
                 
-                if dlg.ShowModal() != wx.ID_YES:
+                if dlg.ShowModal() == wx.ID_NO:
                     
                     raise HydrusExceptions.VetoException()
                     
@@ -2838,13 +2947,13 @@ class GUISession( HydrusSerialisable.SerialisableBaseNamed ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_GUI_SESSION
     SERIALISABLE_NAME = 'GUI Session'
-    SERIALISABLE_VERSION = 3
+    SERIALISABLE_VERSION = 4
     
     def __init__( self, name ):
         
         HydrusSerialisable.SerialisableBaseNamed.__init__( self, name )
         
-        self._pages = []
+        self._page_tuples = []
         
     
     def _GetPageTuple( self, page ):
@@ -2908,7 +3017,7 @@ class GUISession( HydrusSerialisable.SerialisableBaseNamed ):
                 
                 serialisable_management_controller = management_controller.GetSerialisableTuple()
                 
-                serialisable_hashes = [ hash.encode( 'hex' ) for hash in hashes ]
+                serialisable_hashes = [ hash.hex() for hash in hashes ]
                 
                 serialisable_page_data = ( serialisable_management_controller, serialisable_hashes )
                 
@@ -2920,7 +3029,7 @@ class GUISession( HydrusSerialisable.SerialisableBaseNamed ):
         
         serialisable_info = []
         
-        for page_tuple in self._pages:
+        for page_tuple in self._page_tuples:
             
             try:
                 
@@ -2978,7 +3087,7 @@ class GUISession( HydrusSerialisable.SerialisableBaseNamed ):
                 
                 management_controller = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_management_controller )
                 
-                hashes = [ hash.decode( 'hex' ) for hash in serialisable_hashes ]
+                hashes = [ bytes.fromhex( hash ) for hash in serialisable_hashes ]
                 
                 page_data = ( management_controller, hashes )
                 
@@ -2994,7 +3103,7 @@ class GUISession( HydrusSerialisable.SerialisableBaseNamed ):
                 
                 page_tuple = GetPageTuple( serialisable_page_tuple )
                 
-                self._pages.append( page_tuple )
+                self._page_tuples.append( page_tuple )
                 
             except Exception as e:
                 
@@ -3035,17 +3144,56 @@ class GUISession( HydrusSerialisable.SerialisableBaseNamed ):
             return ( 3, new_serialisable_info )
             
         
+        if version == 3:
+            
+            def clean_tuple( spt ):
+                
+                ( page_type, serialisable_page_data ) = spt
+                
+                if page_type == 'pages':
+                    
+                    ( name, pages_serialisable_page_tuples ) = serialisable_page_data
+                    
+                    if name.startswith( '[USER]' ) and len( name ) > 6:
+                        
+                        name = name[6:]
+                        
+                    
+                    pages_serialisable_page_tuples = [ clean_tuple( pages_spt ) for pages_spt in pages_serialisable_page_tuples ]
+                    
+                    return ( 'pages', ( name, pages_serialisable_page_tuples ) )
+                    
+                else:
+                    
+                    return spt
+                    
+                
+            
+            new_serialisable_info = []
+            
+            serialisable_page_tuples = old_serialisable_info
+            
+            for serialisable_page_tuple in serialisable_page_tuples:
+                
+                serialisable_page_tuple = clean_tuple( serialisable_page_tuple )
+                
+                new_serialisable_info.append( serialisable_page_tuple )
+                
+            
+            return ( 4, new_serialisable_info )
+            
+        
     
-    def AddPage( self, page ):
+    def AddPageTuple( self, page ):
         
         page_tuple = self._GetPageTuple( page )
         
-        self._pages.append( page_tuple )
+        self._page_tuples.append( page_tuple )
         
     
-    def GetPages( self ):
+    def GetPageTuples( self ):
         
-        return self._pages
+        return self._page_tuples
         
     
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_GUI_SESSION ] = GUISession

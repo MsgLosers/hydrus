@@ -1,30 +1,29 @@
-import ClientConstants as CC
-import ClientData
-import ClientDefaults
-import ClientDownloading
-import ClientFiles
-import ClientImportOptions
-import ClientImportFileSeeds
-import ClientImportGallerySeeds
-import ClientNetworkingContexts
-import ClientNetworkingJobs
-import ClientParsing
-import ClientPaths
-import ClientThreading
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusFileHandling
-import HydrusGlobals as HG
-import HydrusPaths
-import HydrusSerialisable
-import HydrusThreading
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientDefaults
+from . import ClientDownloading
+from . import ClientFiles
+from . import ClientImportOptions
+from . import ClientImportFileSeeds
+from . import ClientImportGallerySeeds
+from . import ClientNetworkingContexts
+from . import ClientNetworkingJobs
+from . import ClientParsing
+from . import ClientPaths
+from . import ClientThreading
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusFileHandling
+from . import HydrusGlobals as HG
+from . import HydrusPaths
+from . import HydrusSerialisable
+from . import HydrusThreading
 import os
 import random
 import threading
 import time
 import traceback
-import urlparse
 import wx
 
 CHECKER_STATUS_OK = 0
@@ -133,7 +132,7 @@ def PublishPresentationHashes( publishing_label, hashes, publish_to_popup_button
 def THREADDownloadURL( job_key, url, url_string ):
     
     job_key.SetVariable( 'popup_title', url_string )
-    job_key.SetVariable( 'popup_text_1', 'downloading and importing' )
+    job_key.SetVariable( 'popup_text_1', 'initialising' )
     
     #
     
@@ -148,6 +147,11 @@ def THREADDownloadURL( job_key, url, url_string ):
         return network_job
         
     
+    def status_hook( text ):
+        
+        job_key.SetVariable( 'popup_text_1', text )
+        
+    
     network_job_presentation_context_factory = GenerateSinglePopupNetworkJobPresentationContextFactory( job_key )
     
     file_seed = ClientImportFileSeeds.FileSeed( ClientImportFileSeeds.FILE_SEED_TYPE_URL, url )
@@ -156,7 +160,7 @@ def THREADDownloadURL( job_key, url, url_string ):
     
     try:
         
-        file_seed.DownloadAndImportRawFile( url, file_import_options, network_job_factory, network_job_presentation_context_factory )
+        file_seed.DownloadAndImportRawFile( url, file_import_options, network_job_factory, network_job_presentation_context_factory, status_hook )
         
         status = file_seed.status
         
@@ -212,6 +216,11 @@ def THREADDownloadURLs( job_key, urls, title ):
         return network_job
         
     
+    def status_hook( text ):
+        
+        job_key.SetVariable( 'popup_text_2', text )
+        
+    
     network_job_presentation_context_factory = GenerateMultiplePopupNetworkJobPresentationContextFactory( job_key )
     
     for ( i, url ) in enumerate( urls ):
@@ -230,7 +239,7 @@ def THREADDownloadURLs( job_key, urls, title ):
         
         try:
             
-            file_seed.DownloadAndImportRawFile( url, file_import_options, network_job_factory, network_job_presentation_context_factory )
+            file_seed.DownloadAndImportRawFile( url, file_import_options, network_job_factory, network_job_presentation_context_factory, status_hook )
             
             status = file_seed.status
             
@@ -268,6 +277,10 @@ def THREADDownloadURLs( job_key, urls, title ):
             
             HydrusData.Print( url + ' failed to import!' )
             HydrusData.PrintException( e )
+            
+        finally:
+            
+            job_key.DeleteVariable( 'popup_text_2' )
             
         
     

@@ -1,23 +1,23 @@
-import ClientCaches
-import ClientConstants as CC
-import ClientData
-import ClientDefaults
-import ClientDownloading
-import ClientDuplicates
-import ClientGUIShortcuts
-import ClientImporting
-import ClientImportOptions
-import ClientImportSubscriptions
-import ClientMedia
-import ClientNetworkingDomain
-import ClientRatings
-import ClientSearch
-import ClientTags
-import HydrusConstants as HC
-import HydrusData
-import HydrusNetwork
-import HydrusSerialisable
-import TestConstants as TC
+from . import ClientCaches
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientDefaults
+from . import ClientDownloading
+from . import ClientDuplicates
+from . import ClientGUIShortcuts
+from . import ClientImporting
+from . import ClientImportOptions
+from . import ClientImportSubscriptions
+from . import ClientMedia
+from . import ClientNetworkingDomain
+from . import ClientRatings
+from . import ClientSearch
+from . import ClientTags
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusNetwork
+from . import HydrusSerialisable
+from . import TestController as TC
 import os
 import unittest
 import wx
@@ -62,11 +62,11 @@ class TestSerialisables( unittest.TestCase ):
         
         #
         
-        network_string = obj.DumpToNetworkString()
+        network_bytes = obj.DumpToNetworkBytes()
         
-        self.assertIsInstance( network_string, str )
+        self.assertIsInstance( network_bytes, bytes )
         
-        dupe_obj = HydrusSerialisable.CreateFromNetworkString( network_string )
+        dupe_obj = HydrusSerialisable.CreateFromNetworkBytes( network_bytes )
         
         self.assertIsNot( obj, dupe_obj )
         
@@ -77,9 +77,9 @@ class TestSerialisables( unittest.TestCase ):
         
         def test( obj, dupe_obj ):
             
-            self.assertEqual( len( obj.items() ), len( dupe_obj.items() ) )
+            self.assertEqual( len( list(obj.items()) ), len( list(dupe_obj.items()) ) )
             
-            for ( key, value ) in obj.items():
+            for ( key, value ) in list(obj.items()):
                 
                 self.assertEqual( value, dupe_obj[ key ] )
                 
@@ -100,9 +100,9 @@ class TestSerialisables( unittest.TestCase ):
         
         d[ ClientSearch.Predicate( HC.PREDICATE_TYPE_TAG, 'test pred 2' ) ] = HydrusSerialisable.SerialisableList( [ ClientSearch.Predicate( HC.PREDICATE_TYPE_TAG, 'test' + str( i ) ) for i in range( 10 ) ] )
         
-        self.assertEqual( len( d.keys() ), 7 )
+        self.assertEqual( len( list(d.keys()) ), 7 )
         
-        for ( key, value ) in d.items():
+        for ( key, value ) in list(d.items()):
             
             self.assertEqual( d[ key ], value )
             
@@ -118,9 +118,9 @@ class TestSerialisables( unittest.TestCase ):
         db[ 1 ] = HydrusData.GenerateKey()
         db[ 2 ] = [ HydrusData.GenerateKey() for i in range( 10 ) ]
         
-        self.assertEqual( len( db.keys() ), 4 )
+        self.assertEqual( len( list(db.keys()) ), 4 )
         
-        for ( key, value ) in db.items():
+        for ( key, value ) in list(db.items()):
             
             self.assertEqual( db[ key ], value )
             
@@ -159,9 +159,9 @@ class TestSerialisables( unittest.TestCase ):
             self.assertEqual( obj.ToTuple(), dupe_obj.ToTuple() )
             
         
-        duplicate_action_options_delete_and_move = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE, ClientTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE ) ], True )
-        duplicate_action_options_copy = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY, ClientTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY ) ], False )
-        duplicate_action_options_merge = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE, ClientTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ) ], False )
+        duplicate_action_options_delete_and_move = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE, ClientTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE ) ] )
+        duplicate_action_options_copy = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY, ClientTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY ) ] )
+        duplicate_action_options_merge = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE, ClientTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ) ] )
         
         inbox = True
         size = 40960
@@ -188,13 +188,15 @@ class TestSerialisables( unittest.TestCase ):
         substantial_ratings_manager = ClientRatings.RatingsManager( { TC.LOCAL_RATING_LIKE_SERVICE_KEY : 1.0, TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY : 0.8 } )
         empty_ratings_manager = ClientRatings.RatingsManager( {} )
         
+        file_viewing_stats_manager = ClientMedia.FileViewingStatsManager.STATICGenerateEmptyManager()
+        
         #
         
         local_hash_has_values = HydrusData.GenerateKey()
         
         file_info_manager = ClientMedia.FileInfoManager( 1, local_hash_has_values, size, mime, width, height, duration, num_frames, num_words )
         
-        media_result = ClientMedia.MediaResult( file_info_manager, substantial_tags_manager, local_locations_manager, substantial_ratings_manager )
+        media_result = ClientMedia.MediaResult( file_info_manager, substantial_tags_manager, local_locations_manager, substantial_ratings_manager, file_viewing_stats_manager )
         
         local_media_has_values = ClientMedia.MediaSingleton( media_result )
         
@@ -204,7 +206,7 @@ class TestSerialisables( unittest.TestCase ):
         
         file_info_manager = ClientMedia.FileInfoManager( 2, other_local_hash_has_values, size, mime, width, height, duration, num_frames, num_words )
         
-        media_result = ClientMedia.MediaResult( file_info_manager, substantial_tags_manager, local_locations_manager, substantial_ratings_manager )
+        media_result = ClientMedia.MediaResult( file_info_manager, substantial_tags_manager, local_locations_manager, substantial_ratings_manager, file_viewing_stats_manager )
         
         other_local_media_has_values = ClientMedia.MediaSingleton( media_result )
         
@@ -214,7 +216,7 @@ class TestSerialisables( unittest.TestCase ):
         
         file_info_manager = ClientMedia.FileInfoManager( 3, local_hash_empty, size, mime, width, height, duration, num_frames, num_words )
         
-        media_result = ClientMedia.MediaResult( file_info_manager, empty_tags_manager, local_locations_manager, empty_ratings_manager )
+        media_result = ClientMedia.MediaResult( file_info_manager, empty_tags_manager, local_locations_manager, empty_ratings_manager, file_viewing_stats_manager )
         
         local_media_empty = ClientMedia.MediaSingleton( media_result )
         
@@ -224,7 +226,7 @@ class TestSerialisables( unittest.TestCase ):
         
         file_info_manager = ClientMedia.FileInfoManager( 4, trashed_hash_empty, size, mime, width, height, duration, num_frames, num_words )
         
-        media_result = ClientMedia.MediaResult( file_info_manager, empty_tags_manager, trash_locations_manager, empty_ratings_manager )
+        media_result = ClientMedia.MediaResult( file_info_manager, empty_tags_manager, trash_locations_manager, empty_ratings_manager, file_viewing_stats_manager )
         
         trashed_media_empty = ClientMedia.MediaSingleton( media_result )
         
@@ -234,7 +236,7 @@ class TestSerialisables( unittest.TestCase ):
         
         file_info_manager = ClientMedia.FileInfoManager( 5, deleted_hash_empty, size, mime, width, height, duration, num_frames, num_words )
         
-        media_result = ClientMedia.MediaResult( file_info_manager, empty_tags_manager, deleted_locations_manager, empty_ratings_manager )
+        media_result = ClientMedia.MediaResult( file_info_manager, empty_tags_manager, deleted_locations_manager, empty_ratings_manager, file_viewing_stats_manager )
         
         deleted_media_empty = ClientMedia.MediaSingleton( media_result )
         
@@ -244,7 +246,7 @@ class TestSerialisables( unittest.TestCase ):
         
         file_info_manager = ClientMedia.FileInfoManager( 6, one_hash, size, mime, width, height, duration, num_frames, num_words )
         
-        media_result = ClientMedia.MediaResult( file_info_manager, one_tags_manager, local_locations_manager, one_ratings_manager )
+        media_result = ClientMedia.MediaResult( file_info_manager, one_tags_manager, local_locations_manager, one_ratings_manager, file_viewing_stats_manager )
         
         one_media = ClientMedia.MediaSingleton( media_result )
         
@@ -254,7 +256,7 @@ class TestSerialisables( unittest.TestCase ):
         
         file_info_manager = ClientMedia.FileInfoManager( 7, two_hash, size, mime, width, height, duration, num_frames, num_words )
         
-        media_result = ClientMedia.MediaResult( file_info_manager, two_tags_manager, local_locations_manager, two_ratings_manager )
+        media_result = ClientMedia.MediaResult( file_info_manager, two_tags_manager, local_locations_manager, two_ratings_manager, file_viewing_stats_manager )
         
         two_media = ClientMedia.MediaSingleton( media_result )
         
@@ -271,68 +273,70 @@ class TestSerialisables( unittest.TestCase ):
             self.assertEqual( TC.ConvertServiceKeysToContentUpdatesToComparable( one ), TC.ConvertServiceKeysToContentUpdatesToComparable( two ) )
             
         
+        file_deletion_reason = 'test delete'
+        
         #
         
-        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_has_values, local_media_empty )
+        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_has_values, local_media_empty, delete_second = True, file_deletion_reason = file_deletion_reason )
         
         scu = {}
         
-        scu[ CC.LOCAL_FILE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { local_hash_empty } ) ]
+        scu[ CC.LOCAL_FILE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { local_hash_empty }, reason = file_deletion_reason ) ]
         
         assertSCUEqual( result, scu )
         
         #
         
-        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_has_values, trashed_media_empty )
+        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_has_values, trashed_media_empty, delete_second = True, file_deletion_reason = file_deletion_reason )
         
         scu = {}
         
-        scu[ CC.TRASH_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { trashed_hash_empty } ) ]
+        scu[ CC.TRASH_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { trashed_hash_empty }, reason = file_deletion_reason ) ]
         
         assertSCUEqual( result, scu )
         
         #
         
-        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_has_values, deleted_media_empty )
+        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_has_values, deleted_media_empty, delete_second = True, file_deletion_reason = file_deletion_reason )
         
         self.assertEqual( result, {} )
         
         #
         
-        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_has_values, other_local_media_has_values )
+        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_has_values, other_local_media_has_values, delete_second = True, file_deletion_reason = file_deletion_reason )
         
         scu = {}
         
         scu[ CC.LOCAL_TAG_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_DELETE, ( 'test tag', { other_local_hash_has_values } ) ), HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_DELETE, ( 'series:namespaced test tag', { other_local_hash_has_values } ) ) ]
         scu[ TC.LOCAL_RATING_LIKE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( None, { other_local_hash_has_values } ) ) ]
         scu[ TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( None, { other_local_hash_has_values } ) ) ]
-        scu[ CC.LOCAL_FILE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { other_local_hash_has_values } ) ]
+        scu[ CC.LOCAL_FILE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { other_local_hash_has_values }, reason = file_deletion_reason ) ]
         
         assertSCUEqual( result, scu )
         
         #
         
-        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_empty, other_local_media_has_values )
+        result = duplicate_action_options_delete_and_move.ProcessPairIntoContentUpdates( local_media_empty, other_local_media_has_values, delete_second = True, file_deletion_reason = file_deletion_reason )
         
         scu = {}
         
         scu[ CC.LOCAL_TAG_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_ADD, ( 'test tag', { local_hash_empty } ) ), HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_ADD, ( 'series:namespaced test tag', { local_hash_empty } ) ), HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_DELETE, ( 'test tag', { other_local_hash_has_values } ) ), HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_DELETE, ( 'series:namespaced test tag', { other_local_hash_has_values } ) ) ]
         scu[ TC.LOCAL_RATING_LIKE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( 1.0, { local_hash_empty } ) ), HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( None, { other_local_hash_has_values } ) ) ]
         scu[ TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( 0.8, { local_hash_empty } ) ), HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( None, { other_local_hash_has_values } ) ) ]
-        scu[ CC.LOCAL_FILE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { other_local_hash_has_values } ) ]
+        scu[ CC.LOCAL_FILE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { other_local_hash_has_values }, reason = file_deletion_reason ) ]
         
         assertSCUEqual( result, scu )
         
         #
         #
         
-        result = duplicate_action_options_copy.ProcessPairIntoContentUpdates( local_media_has_values, local_media_empty )
+        result = duplicate_action_options_copy.ProcessPairIntoContentUpdates( local_media_has_values, local_media_empty, file_deletion_reason = file_deletion_reason )
         
         self.assertEqual( result, {} )
         
         #
         
-        result = duplicate_action_options_copy.ProcessPairIntoContentUpdates( local_media_empty, other_local_media_has_values )
+        result = duplicate_action_options_copy.ProcessPairIntoContentUpdates( local_media_empty, other_local_media_has_values, file_deletion_reason = file_deletion_reason )
         
         scu = {}
         
@@ -345,7 +349,7 @@ class TestSerialisables( unittest.TestCase ):
         #
         #
         
-        result = duplicate_action_options_merge.ProcessPairIntoContentUpdates( local_media_has_values, local_media_empty )
+        result = duplicate_action_options_merge.ProcessPairIntoContentUpdates( local_media_has_values, local_media_empty, file_deletion_reason = file_deletion_reason )
         
         scu = {}
         
@@ -357,7 +361,7 @@ class TestSerialisables( unittest.TestCase ):
         
         #
         
-        result = duplicate_action_options_merge.ProcessPairIntoContentUpdates( local_media_empty, other_local_media_has_values )
+        result = duplicate_action_options_merge.ProcessPairIntoContentUpdates( local_media_empty, other_local_media_has_values, file_deletion_reason = file_deletion_reason )
         
         scu = {}
         
@@ -369,11 +373,13 @@ class TestSerialisables( unittest.TestCase ):
         
         #
         
-        result = duplicate_action_options_merge.ProcessPairIntoContentUpdates( one_media, two_media )
+        result = duplicate_action_options_merge.ProcessPairIntoContentUpdates( one_media, two_media, file_deletion_reason = file_deletion_reason )
         
         scu = {}
         
         scu[ CC.LOCAL_TAG_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_ADD, ( 'one', { two_hash } ) ), HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_ADD, ( 'two', { one_hash } ) ) ]
+        scu[ TC.LOCAL_RATING_LIKE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( 1.0, { two_hash } ) ) ]
+        scu[ TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, ( 0.8, { two_hash } ) ) ]
         
         assertSCUEqual( result, scu )
         
@@ -408,7 +414,7 @@ class TestSerialisables( unittest.TestCase ):
             
         
     
-    def test_SERIALISABLE_TYPE_SHORTCUTS( self ):
+    def test_SERIALISABLE_TYPE_SHORTCUT_SET( self ):
         
         def test( obj, dupe_obj ):
             
@@ -438,24 +444,24 @@ class TestSerialisables( unittest.TestCase ):
         m_shortcut_2 = ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_MOUSE, CC.SHORTCUT_MOUSE_MIDDLE, [ CC.SHORTCUT_MODIFIER_CTRL ] )
         m_shortcut_3 = ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_MOUSE, CC.SHORTCUT_MOUSE_SCROLL_DOWN, [ CC.SHORTCUT_MODIFIER_ALT, CC.SHORTCUT_MODIFIER_SHIFT ] )
         
-        shortcuts = ClientGUIShortcuts.Shortcuts( 'test' )
+        shortcut_set = ClientGUIShortcuts.ShortcutSet( 'test' )
         
-        shortcuts.SetCommand( k_shortcut_1, command_1 )
-        shortcuts.SetCommand( k_shortcut_2, command_2 )
-        shortcuts.SetCommand( k_shortcut_3, command_2 )
-        shortcuts.SetCommand( k_shortcut_4, command_3 )
+        shortcut_set.SetCommand( k_shortcut_1, command_1 )
+        shortcut_set.SetCommand( k_shortcut_2, command_2 )
+        shortcut_set.SetCommand( k_shortcut_3, command_2 )
+        shortcut_set.SetCommand( k_shortcut_4, command_3 )
         
-        shortcuts.SetCommand( m_shortcut_1, command_1 )
-        shortcuts.SetCommand( m_shortcut_2, command_2 )
-        shortcuts.SetCommand( m_shortcut_3, command_3 )
+        shortcut_set.SetCommand( m_shortcut_1, command_1 )
+        shortcut_set.SetCommand( m_shortcut_2, command_2 )
+        shortcut_set.SetCommand( m_shortcut_3, command_3 )
         
-        self._dump_and_load_and_test( shortcuts, test )
+        self._dump_and_load_and_test( shortcut_set, test )
         
-        self.assertEqual( shortcuts.GetCommand( k_shortcut_1 ).GetData(), command_1.GetData() )
+        self.assertEqual( shortcut_set.GetCommand( k_shortcut_1 ).GetData(), command_1.GetData() )
         
-        shortcuts.SetCommand( k_shortcut_1, command_3 )
+        shortcut_set.SetCommand( k_shortcut_1, command_3 )
         
-        self.assertEqual( shortcuts.GetCommand( k_shortcut_1 ).GetData(), command_3.GetData() )
+        self.assertEqual( shortcut_set.GetCommand( k_shortcut_1 ).GetData(), command_3.GetData() )
         
     
     def test_SERIALISABLE_TYPE_SUBSCRIPTION( self ):

@@ -1,9 +1,10 @@
-import ClientConstants as CC
-import ClientData
-import HydrusConstants as HC
-import HydrusGlobals as HG
-import HydrusNetworking
-import HydrusSerialisable
+from . import ClientConstants as CC
+from . import ClientData
+from . import HydrusConstants as HC
+from . import HydrusGlobals as HG
+from . import HydrusNetworking
+from . import HydrusSerialisable
+import re
 import os
 import wx
 
@@ -12,7 +13,7 @@ def GetClientDefaultOptions():
     options = {}
     
     options[ 'play_dumper_noises' ] = True
-    options[ 'default_collect' ] = None
+    options[ 'default_collect' ] = []
     options[ 'export_path' ] = None
     options[ 'hpos' ] = 400
     options[ 'vpos' ] = 700
@@ -21,10 +22,7 @@ def GetClientDefaultOptions():
     options[ 'fullscreen_cache_size' ] = 150 * 1048576
     options[ 'thumbnail_dimensions' ] = [ 150, 125 ]
     options[ 'password' ] = None
-    options[ 'num_autocomplete_chars' ] = 2
     options[ 'default_gui_session' ] = 'last session'
-    options[ 'fetch_ac_results_automatically' ] = True
-    options[ 'ac_timings' ] = ( 3, 500, 250 )
     options[ 'idle_period' ] = 60 * 30
     options[ 'idle_mouse_period' ] = 60 * 10
     options[ 'idle_cpu_max' ] = 50
@@ -36,7 +34,6 @@ def GetClientDefaultOptions():
     options[ 'trash_max_size' ] = 2048
     options[ 'remove_trashed_files' ] = False
     options[ 'remove_filtered_files' ] = False
-    options[ 'external_host' ] = None
     options[ 'gallery_file_limit' ] = 2000
     options[ 'always_embed_autocompletes' ] = HC.PLATFORM_LINUX or HC.PLATFORM_OSX
     options[ 'confirm_trash' ] = True
@@ -47,8 +44,8 @@ def GetClientDefaultOptions():
     
     regex_favourites = []
     
-    regex_favourites.append( ( r'[1-9]+\d*(?=.{4}$)', u'\u2026' + r'0074.jpg -> 74' ) )
-    regex_favourites.append( ( r'[^' + os.path.sep.encode( 'string_escape' ) + r']+(?=\s-)', r'E:\my collection\author name - v4c1p0074.jpg -> author name' ) )
+    regex_favourites.append( ( r'[1-9]+\d*(?=.{4}$)', '\u2026' + r'0074.jpg -> 74' ) )
+    regex_favourites.append( ( r'[^' + re.escape( os.path.sep ) + r']+(?=\s-)', r'E:\my collection\author name - v4c1p0074.jpg -> author name' ) )
     
     options[ 'regex_favourites' ] = regex_favourites
     
@@ -64,7 +61,7 @@ def GetClientDefaultOptions():
     system_predicates[ 'size' ] = ( '<', 200, 1024 )
     system_predicates[ 'width' ] = ( '=', 1920 )
     system_predicates[ 'num_words' ] = ( '<', 30000 )
-    system_predicates[ 'num_pixels' ] = ( u'\u2248', 2, 1000000 )
+    system_predicates[ 'num_pixels' ] = ( '\u2248', 2, 1000000 )
     system_predicates[ 'hamming_distance' ] = 5
     
     options[ 'file_system_predicates' ] = system_predicates
@@ -109,7 +106,7 @@ def GetClientDefaultOptions():
     
 def GetDefaultCheckerOptions( name ):
     
-    import ClientImportOptions
+    from . import ClientImportOptions
     
     if name == 'thread':
         
@@ -169,13 +166,13 @@ def GetDefaultGUGs():
     
     dir_path = os.path.join( HC.STATIC_DIR, 'default', 'gugs' )
     
-    import ClientNetworkingDomain
+    from . import ClientNetworkingDomain
     
     return GetDefaultObjectsFromPNGs( dir_path, ( ClientNetworkingDomain.GalleryURLGenerator, ClientNetworkingDomain.NestedGalleryURLGenerator ) )
     
 def GetDefaultNGUGs():
     
-    import ClientNetworkingDomain
+    from . import ClientNetworkingDomain
     
     gugs = [ gug for gug in GetDefaultGUGs() if isinstance( gug, ClientNetworkingDomain.NestedGalleryURLGenerator ) ]
     
@@ -183,7 +180,7 @@ def GetDefaultNGUGs():
     
 def GetDefaultSingleGUGs():
     
-    import ClientNetworkingDomain
+    from . import ClientNetworkingDomain
     
     gugs = [ gug for gug in GetDefaultGUGs() if isinstance( gug, ClientNetworkingDomain.GalleryURLGenerator ) ]
     
@@ -287,7 +284,7 @@ def GetDefaultLoginScripts():
     
     dir_path = os.path.join( HC.STATIC_DIR, 'default', 'login_scripts' )
     
-    import ClientNetworkingLogin
+    from . import ClientNetworkingLogin
     
     return GetDefaultObjectsFromPNGs( dir_path, ( ClientNetworkingLogin.LoginScriptDomain, ) )
     
@@ -295,26 +292,28 @@ def GetDefaultParsers():
     
     dir_path = os.path.join( HC.STATIC_DIR, 'default', 'parsers' )
     
-    import ClientParsing
+    from . import ClientParsing
     
     return GetDefaultObjectsFromPNGs( dir_path, ( ClientParsing.PageParser, ) )
     
 def GetDefaultScriptRows():
     
+    from . import HydrusData
+    
     script_info = []
     
-    script_info.append( ( 32, 'gelbooru md5', 1, '''["http://gelbooru.com/index.php", 0, 1, 1, "md5", {"s": "list", "page": "post"}, [[30, 1, ["we got sent back to main gallery page -- title test", 8, [27, 1, [[["head", {}, 0], ["title", {}, 0]], null]], [true, true, "Image List"]]], [30, 1, ["", 0, [27, 1, [[["li", {"class": "tag-type-general"}, null], ["a", {}, 1]], null]], ""]], [30, 1, ["", 0, [27, 1, [[["li", {"class": "tag-type-copyright"}, null], ["a", {}, 1]], null]], "series"]], [30, 1, ["", 0, [27, 1, [[["li", {"class": "tag-type-artist"}, null], ["a", {}, 1]], null]], "creator"]], [30, 1, ["", 0, [27, 1, [[["li", {"class": "tag-type-character"}, null], ["a", {}, 1]], null]], "character"]], [30, 1, ["we got sent back to main gallery page -- page links exist", 8, [27, 1, [[["div", {}, null]], "class"]], [true, true, "pagination"]]]]]''' ) )
-    script_info.append( ( 32, 'iqdb danbooru', 1, '''["http://danbooru.iqdb.org/", 1, 0, 0, "file", {}, [[29, 1, ["link to danbooru", [27, 1, [[["td", {"class": "image"}, 1], ["a", {}, 0]], "href"]], [[30, 1, ["", 0, [27, 1, [[["section", {"id": "tag-list"}, 0], ["li", {"class": "category-1"}, null], ["a", {"class": "search-tag"}, 0]], null]], "creator"]], [30, 1, ["", 0, [27, 1, [[["section", {"id": "tag-list"}, 0], ["li", {"class": "category-3"}, null], ["a", {"class": "search-tag"}, 0]], null]], "series"]], [30, 1, ["", 0, [27, 1, [[["section", {"id": "tag-list"}, 0], ["li", {"class": "category-4"}, null], ["a", {"class": "search-tag"}, 0]], null]], "character"]], [30, 1, ["", 0, [27, 1, [[["section", {"id": "tag-list"}, 0], ["li", {"class": "category-0"}, null], ["a", {"class": "search-tag"}, 0]], null]], ""]]]]], [30, 1, ["no iqdb match found", 8, [27, 1, [[["th", {}, null]], null]], [false, true, "Best match"]]]]]''' ) )
+    script_info.append( ( 32, 'gelbooru md5', 1, HydrusData.GetNow(), '''["http://gelbooru.com/index.php", 0, 1, 1, "md5", {"s": "list", "page": "post"}, [[30, 1, ["we got sent back to main gallery page -- title test", 8, [27, 1, [[["head", {}, 0], ["title", {}, 0]], null]], [true, true, "Image List"]]], [30, 1, ["", 0, [27, 1, [[["li", {"class": "tag-type-general"}, null], ["a", {}, 1]], null]], ""]], [30, 1, ["", 0, [27, 1, [[["li", {"class": "tag-type-copyright"}, null], ["a", {}, 1]], null]], "series"]], [30, 1, ["", 0, [27, 1, [[["li", {"class": "tag-type-artist"}, null], ["a", {}, 1]], null]], "creator"]], [30, 1, ["", 0, [27, 1, [[["li", {"class": "tag-type-character"}, null], ["a", {}, 1]], null]], "character"]], [30, 1, ["we got sent back to main gallery page -- page links exist", 8, [27, 1, [[["div", {}, null]], "class"]], [true, true, "pagination"]]]]]''' ) )
+    script_info.append( ( 32, 'iqdb danbooru', 1, HydrusData.GetNow(), '''["http://danbooru.iqdb.org/", 1, 0, 0, "file", {}, [[29, 1, ["link to danbooru", [27, 1, [[["td", {"class": "image"}, 1], ["a", {}, 0]], "href"]], [[30, 1, ["", 0, [27, 1, [[["section", {"id": "tag-list"}, 0], ["li", {"class": "category-1"}, null], ["a", {"class": "search-tag"}, 0]], null]], "creator"]], [30, 1, ["", 0, [27, 1, [[["section", {"id": "tag-list"}, 0], ["li", {"class": "category-3"}, null], ["a", {"class": "search-tag"}, 0]], null]], "series"]], [30, 1, ["", 0, [27, 1, [[["section", {"id": "tag-list"}, 0], ["li", {"class": "category-4"}, null], ["a", {"class": "search-tag"}, 0]], null]], "character"]], [30, 1, ["", 0, [27, 1, [[["section", {"id": "tag-list"}, 0], ["li", {"class": "category-0"}, null], ["a", {"class": "search-tag"}, 0]], null]], ""]]]]], [30, 1, ["no iqdb match found", 8, [27, 1, [[["th", {}, null]], null]], [false, true, "Best match"]]]]]''' ) )
     
     return script_info
     
 def GetDefaultShortcuts():
     
-    import ClientGUIShortcuts
+    from . import ClientGUIShortcuts
     
     shortcuts = []
     
-    archive_delete_filter = ClientGUIShortcuts.Shortcuts( 'archive_delete_filter' )
+    archive_delete_filter = ClientGUIShortcuts.ShortcutSet( 'archive_delete_filter' )
     
     archive_delete_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_MOUSE, CC.SHORTCUT_MOUSE_LEFT, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'archive_delete_filter_keep' ) )
     archive_delete_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_MOUSE, CC.SHORTCUT_MOUSE_RIGHT, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'archive_delete_filter_delete' ) )
@@ -330,19 +329,19 @@ def GetDefaultShortcuts():
     
     shortcuts.append( archive_delete_filter )
     
-    duplicate_filter = ClientGUIShortcuts.Shortcuts( 'duplicate_filter' )
+    duplicate_filter = ClientGUIShortcuts.ShortcutSet( 'duplicate_filter' )
     
-    duplicate_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_MOUSE, CC.SHORTCUT_MOUSE_LEFT, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'duplicate_filter_this_is_better' ) )
+    duplicate_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_MOUSE, CC.SHORTCUT_MOUSE_LEFT, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'duplicate_filter_this_is_better_and_delete_other' ) )
     duplicate_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_MOUSE, CC.SHORTCUT_MOUSE_RIGHT, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'duplicate_filter_alternates' ) )
     duplicate_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_MOUSE, CC.SHORTCUT_MOUSE_MIDDLE, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'duplicate_filter_back' ) )
     
-    duplicate_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_SPACE, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'duplicate_filter_this_is_better' ) )
+    duplicate_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_SPACE, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'duplicate_filter_this_is_better_and_delete_other' ) )
     duplicate_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_UP, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'duplicate_filter_skip' ) )
     duplicate_filter.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_NUMPAD_UP, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'duplicate_filter_skip' ) )
     
     shortcuts.append( duplicate_filter )
     
-    media = ClientGUIShortcuts.Shortcuts( 'media' )
+    media = ClientGUIShortcuts.ShortcutSet( 'media' )
     
     media.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_F4, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'manage_file_ratings' ) )
     media.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_F3, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'manage_file_tags' ) )
@@ -360,7 +359,7 @@ def GetDefaultShortcuts():
     
     shortcuts.append( media )
     
-    main_gui = ClientGUIShortcuts.Shortcuts( 'main_gui' )
+    main_gui = ClientGUIShortcuts.ShortcutSet( 'main_gui' )
     
     main_gui.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_F5, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'refresh' ) )
     main_gui.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_F9, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'new_page' ) )
@@ -377,7 +376,7 @@ def GetDefaultShortcuts():
     
     shortcuts.append( main_gui )
     
-    media_viewer_browser = ClientGUIShortcuts.Shortcuts( 'media_viewer_browser' )
+    media_viewer_browser = ClientGUIShortcuts.ShortcutSet( 'media_viewer_browser' )
     
     media_viewer_browser.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_UP, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'view_previous' ) )
     media_viewer_browser.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, wx.WXK_LEFT, [] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'view_previous' ) )
@@ -405,7 +404,7 @@ def GetDefaultShortcuts():
     
     shortcuts.append( media_viewer_browser )
     
-    media_viewer = ClientGUIShortcuts.Shortcuts( 'media_viewer' )
+    media_viewer = ClientGUIShortcuts.ShortcutSet( 'media_viewer' )
     
     media_viewer.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, ord( 'B' ), [ CC.SHORTCUT_MODIFIER_CTRL ] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'move_animation_to_previous_frame' ) )
     media_viewer.SetCommand( ClientGUIShortcuts.Shortcut( CC.SHORTCUT_TYPE_KEYBOARD, ord( 'N' ), [ CC.SHORTCUT_MODIFIER_CTRL ] ), ClientData.ApplicationCommand( CC.APPLICATION_COMMAND_TYPE_SIMPLE, 'move_animation_to_next_frame' ) )
@@ -434,17 +433,17 @@ def GetDefaultSimpleDownloaderFormulae():
     
     dir_path = os.path.join( HC.STATIC_DIR, 'default', 'simple_downloader_formulae' )
     
-    import ClientParsing
+    from . import ClientParsing
     
     return GetDefaultObjectsFromPNGs( dir_path, ( ClientParsing.SimpleDownloaderParsingFormula, ) )
     
-def GetDefaultURLMatches():
+def GetDefaultURLClasses():
     
     dir_path = os.path.join( HC.STATIC_DIR, 'default', 'url_classes' )
     
-    import ClientNetworkingDomain
+    from . import ClientNetworkingDomain
     
-    return GetDefaultObjectsFromPNGs( dir_path, ( ClientNetworkingDomain.URLMatch, ) )
+    return GetDefaultObjectsFromPNGs( dir_path, ( ClientNetworkingDomain.URLClass, ) )
     
 def GetDefaultObjectsFromPNGs( dir_path, allowed_object_types ):
     
@@ -455,7 +454,7 @@ def GetDefaultObjectsFromPNGs( dir_path, allowed_object_types ):
     
     default_objects = []
     
-    import ClientSerialisable
+    from . import ClientSerialisable
     
     for filename in os.listdir( dir_path ):
         
@@ -465,7 +464,7 @@ def GetDefaultObjectsFromPNGs( dir_path, allowed_object_types ):
             
             payload = ClientSerialisable.LoadFromPng( path )
             
-            obj = HydrusSerialisable.CreateFromNetworkString( payload )
+            obj = HydrusSerialisable.CreateFromNetworkBytes( payload )
             
             if isinstance( obj, HydrusSerialisable.SerialisableList ):
                 
@@ -494,7 +493,7 @@ def GetDefaultObjectsFromPNGs( dir_path, allowed_object_types ):
     
 def SetDefaultBandwidthManagerRules( bandwidth_manager ):
     
-    import ClientNetworkingContexts
+    from . import ClientNetworkingContexts
     
     KB = 1024
     MB = 1024 ** 2
@@ -581,8 +580,8 @@ def SetDefaultDomainManagerData( domain_manager ):
     
     #
     
-    import ClientNetworkingContexts
-    import ClientNetworkingDomain
+    from . import ClientNetworkingContexts
+    from . import ClientNetworkingDomain
     
     custom_header_dict = {}
     
@@ -616,7 +615,7 @@ def SetDefaultDomainManagerData( domain_manager ):
     
     #
     
-    domain_manager.SetURLMatches( GetDefaultURLMatches() )
+    domain_manager.SetURLClasses( GetDefaultURLClasses() )
     
     #
     
@@ -624,7 +623,7 @@ def SetDefaultDomainManagerData( domain_manager ):
     
     #
     
-    domain_manager.TryToLinkURLMatchesAndParsers()
+    domain_manager.TryToLinkURLClassesAndParsers()
     
 def SetDefaultLoginManagerScripts( login_manager ):
     

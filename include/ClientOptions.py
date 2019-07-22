@@ -1,14 +1,14 @@
-import ClientConstants as CC
-import ClientDefaults
-import ClientDownloading
-import ClientDuplicates
-import ClientImporting
-import HydrusConstants as HC
-import HydrusGlobals as HG
-import HydrusData
-import HydrusPaths
-import HydrusSerialisable
-import HydrusTags
+from . import ClientConstants as CC
+from . import ClientDefaults
+from . import ClientDownloading
+from . import ClientDuplicates
+from . import ClientImporting
+from . import HydrusConstants as HC
+from . import HydrusGlobals as HG
+from . import HydrusData
+from . import HydrusPaths
+from . import HydrusSerialisable
+from . import HydrusTags
 import os
 import threading
 import wx
@@ -19,33 +19,25 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
     SERIALISABLE_NAME = 'Client Options'
     SERIALISABLE_VERSION = 3
     
-    def __init__( self, db_dir = None ):
+    def __init__( self ):
         
         HydrusSerialisable.SerialisableBase.__init__( self )
-        
-        if db_dir is None:
-            
-            db_dir = HC.DEFAULT_DB_DIR
-            
         
         self._dictionary = HydrusSerialisable.SerialisableDictionary()
         
         self._lock = threading.Lock()
         
-        self._InitialiseDefaults( db_dir )
+        self._InitialiseDefaults()
         
     
     def _GetSerialisableInfo( self ):
         
-        with self._lock:
-            
-            serialisable_info = self._dictionary.GetSerialisableTuple()
-            
-            return serialisable_info
-            
+        serialisable_info = self._dictionary.GetSerialisableTuple()
+        
+        return serialisable_info
         
     
-    def _InitialiseDefaults( self, db_dir ):
+    def _InitialiseDefaults( self ):
         
         self._dictionary[ 'booleans' ] = {}
         
@@ -58,9 +50,13 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'booleans' ][ 'filter_inbox_and_archive_predicates' ] = False
         
         self._dictionary[ 'booleans' ][ 'discord_dnd_fix' ] = False
+        self._dictionary[ 'booleans' ][ 'secret_discord_dnd_fix' ] = False
         
         self._dictionary[ 'booleans' ][ 'disable_cv_for_gifs' ] = False
         
+        self._dictionary[ 'booleans' ][ 'set_search_focus_on_page_change' ] = False
+        
+        self._dictionary[ 'booleans' ][ 'allow_remove_on_manage_tags_input' ] = True
         self._dictionary[ 'booleans' ][ 'add_parents_on_manage_tags' ] = True
         self._dictionary[ 'booleans' ][ 'replace_siblings_on_manage_tags' ] = True
         self._dictionary[ 'booleans' ][ 'yes_no_on_remove_on_manage_tags' ] = True
@@ -83,6 +79,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'booleans' ][ 'reverse_page_shift_drag_behaviour' ] = False
         
         self._dictionary[ 'booleans' ][ 'anchor_and_hide_canvas_drags' ] = HC.PLATFORM_WINDOWS
+        self._dictionary[ 'booleans' ][ 'touchscreen_canvas_drags_unanchor' ] = False
         
         self._dictionary[ 'booleans' ][ 'thumbnail_fill' ] = False
         
@@ -93,6 +90,13 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'booleans' ][ 'ac_select_first_with_count' ] = False
         
         self._dictionary[ 'booleans' ][ 'saving_sash_positions_on_exit' ] = True
+        
+        self._dictionary[ 'booleans' ][ 'file_maintenance_on_shutdown' ] = True
+        self._dictionary[ 'booleans' ][ 'file_maintenance_during_idle' ] = True
+        
+        self._dictionary[ 'booleans' ][ 'file_maintenance_throttle_enable' ] = True
+        
+        self._dictionary[ 'booleans' ][ 'save_page_sort_on_change' ] = False
         
         self._dictionary[ 'booleans' ][ 'pause_all_new_network_traffic' ] = False
         self._dictionary[ 'booleans' ][ 'pause_all_file_queues' ] = False
@@ -105,6 +109,8 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         self._dictionary[ 'booleans' ][ 'always_show_iso_time' ] = False
         
+        self._dictionary[ 'booleans' ][ 'use_advanced_file_deletion_dialog' ] = False
+        
         self._dictionary[ 'booleans' ][ 'show_new_on_file_seed_short_summary' ] = False
         self._dictionary[ 'booleans' ][ 'show_deleted_on_file_seed_short_summary' ] = False
         
@@ -116,6 +122,18 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'booleans' ][ 'highlight_new_query' ] = True
         
         self._dictionary[ 'booleans' ][ 'delete_files_after_export' ] = False
+        
+        self._dictionary[ 'booleans' ][ 'file_viewing_statistics_active' ] = True
+        self._dictionary[ 'booleans' ][ 'file_viewing_statistics_active_on_dupe_filter' ] = False
+        
+        self._dictionary[ 'booleans' ][ 'file_system_waits_on_wakeup' ] = False
+        
+        self._dictionary[ 'booleans' ][ 'always_show_system_everything' ] = False
+        
+        self._dictionary[ 'booleans' ][ 'watch_clipboard_for_watcher_urls' ] = False
+        self._dictionary[ 'booleans' ][ 'watch_clipboard_for_other_recognised_urls' ] = False
+        
+        self._dictionary[ 'booleans' ][ 'autocomplete_results_fetch_automatically' ] = True
         
         #
         
@@ -147,9 +165,9 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_THUMB_BORDER_SELECTED ] = ( 223, 227, 230 ) # light grey
         self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_THUMB_BORDER_REMOTE ] = ( 248, 208, 204 ) # 25% Vermillion, 75% White
         self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_THUMB_BORDER_REMOTE_SELECTED ] = ( 227, 66, 52 ) # Vermillion, lol
-        self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_THUMBGRID_BACKGROUND ] = ( 0, 0, 0 )
+        self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_THUMBGRID_BACKGROUND ] = ( 52, 52, 52 ) # 20% flat gray
         self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_AUTOCOMPLETE_BACKGROUND ] = ( 83, 98, 103 ) # Gunmetal
-        self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_MEDIA_BACKGROUND ] = ( 0, 0, 0 )
+        self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_MEDIA_BACKGROUND ] = ( 52, 52, 52 ) # 20% flat gray
         self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_MEDIA_TEXT ] = ( 112, 128, 144 ) # Slate Gray
         self._dictionary[ 'colours' ][ 'darkmode' ][ CC.COLOUR_TAGS_BOX ] = ( 0, 0, 0 )
         
@@ -157,12 +175,11 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         self._dictionary[ 'duplicate_action_options' ] = HydrusSerialisable.SerialisableDictionary()
         
-        import ClientTags
+        from . import ClientTags
         
-        self._dictionary[ 'duplicate_action_options' ][ HC.DUPLICATE_BETTER ] = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE, ClientTags.TagFilter() ) ], [], True, True, sync_urls_action = HC.CONTENT_MERGE_ACTION_COPY )
-        self._dictionary[ 'duplicate_action_options' ][ HC.DUPLICATE_SAME_QUALITY ] = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE, ClientTags.TagFilter() ) ], [], False, True, sync_urls_action = HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE )
-        self._dictionary[ 'duplicate_action_options' ][ HC.DUPLICATE_ALTERNATE ] = ClientDuplicates.DuplicateActionOptions( [], [], False )
-        self._dictionary[ 'duplicate_action_options' ][ HC.DUPLICATE_NOT_DUPLICATE ] = ClientDuplicates.DuplicateActionOptions( [], [], False )
+        self._dictionary[ 'duplicate_action_options' ][ HC.DUPLICATE_BETTER ] = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE, ClientTags.TagFilter() ) ], [], sync_archive = True, sync_urls_action = HC.CONTENT_MERGE_ACTION_COPY )
+        self._dictionary[ 'duplicate_action_options' ][ HC.DUPLICATE_SAME_QUALITY ] = ClientDuplicates.DuplicateActionOptions( [ ( CC.LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE, ClientTags.TagFilter() ) ], [], sync_archive = True, sync_urls_action = HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE )
+        self._dictionary[ 'duplicate_action_options' ][ HC.DUPLICATE_ALTERNATE ] = ClientDuplicates.DuplicateActionOptions()
         
         #
         
@@ -206,12 +223,14 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         self._dictionary[ 'integers' ][ 'video_thumbnail_percentage_in' ] = 35
         
-        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_higher_filesize' ] = 20
-        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_much_higher_filesize' ] = 10
+        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_higher_jpeg_quality' ] = 10
+        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_much_higher_jpeg_quality' ] = 20
+        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_higher_filesize' ] = 10
+        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_much_higher_filesize' ] = 20
         self._dictionary[ 'integers' ][ 'duplicate_comparison_score_higher_resolution' ] = 20
-        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_much_higher_resolution' ] = 5
+        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_much_higher_resolution' ] = 50
         self._dictionary[ 'integers' ][ 'duplicate_comparison_score_more_tags' ] = 8
-        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_older' ] = 5
+        self._dictionary[ 'integers' ][ 'duplicate_comparison_score_older' ] = 4
         
         self._dictionary[ 'integers' ][ 'thumbnail_cache_timeout' ] = 86400
         self._dictionary[ 'integers' ][ 'image_cache_timeout' ] = 600
@@ -219,12 +238,23 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'integers' ][ 'thumbnail_border' ] = 1
         self._dictionary[ 'integers' ][ 'thumbnail_margin' ] = 2
         
+        self._dictionary[ 'integers' ][ 'file_maintenance_throttle_files' ] = 200
+        self._dictionary[ 'integers' ][ 'file_maintenance_throttle_time_delta' ] = 86400
+        
+        self._dictionary[ 'integers' ][ 'subscription_network_error_delay' ] = 12 * 3600
+        self._dictionary[ 'integers' ][ 'subscription_other_error_delay' ] = 36 * 3600
+        self._dictionary[ 'integers' ][ 'downloader_network_error_delay' ] = 90 * 60
+        
+        self._dictionary[ 'integers' ][ 'file_viewing_stats_menu_display' ] = CC.FILE_VIEWING_STATS_MENU_DISPLAY_MEDIA_AND_PREVIEW_IN_SUBMENU
+        
+        self._dictionary[ 'integers' ][ 'number_of_gui_session_backups' ] = 10
+        
         #
         
         self._dictionary[ 'keys' ] = {}
         
-        self._dictionary[ 'keys' ][ 'default_tag_service_search_page' ] = CC.COMBINED_TAG_SERVICE_KEY.encode( 'hex' )
-        self._dictionary[ 'keys' ][ 'default_gug_key' ] = HydrusData.GenerateKey().encode( 'hex' )
+        self._dictionary[ 'keys' ][ 'default_tag_service_search_page' ] = CC.COMBINED_TAG_SERVICE_KEY.hex()
+        self._dictionary[ 'keys' ][ 'default_gug_key' ] = HydrusData.GenerateKey().hex()
         
         self._dictionary[ 'key_list' ] = {}
         
@@ -247,6 +277,13 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         self._dictionary[ 'noneable_integers' ][ 'last_review_bandwidth_search_distance' ] = 7 * 86400
         
+        self._dictionary[ 'noneable_integers' ][ 'file_viewing_statistics_media_min_time' ] = 2
+        self._dictionary[ 'noneable_integers' ][ 'file_viewing_statistics_media_max_time' ] = 600
+        self._dictionary[ 'noneable_integers' ][ 'file_viewing_statistics_preview_min_time' ] = 5
+        self._dictionary[ 'noneable_integers' ][ 'file_viewing_statistics_preview_max_time' ] = 60
+        
+        self._dictionary[ 'noneable_integers' ][ 'autocomplete_exact_match_threshold' ] = 2
+        
         #
         
         self._dictionary[ 'simple_downloader_formulae' ] = HydrusSerialisable.SerialisableList()
@@ -258,10 +295,11 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'noneable_strings' ][ 'favourite_file_lookup_script' ] = 'gelbooru md5'
         self._dictionary[ 'noneable_strings' ][ 'suggested_tags_layout' ] = 'notebook'
         self._dictionary[ 'noneable_strings' ][ 'backup_path' ] = None
-        self._dictionary[ 'noneable_strings' ][ 'temp_path_override' ] = None
         self._dictionary[ 'noneable_strings' ][ 'web_browser_path' ] = None
         self._dictionary[ 'noneable_strings' ][ 'last_png_export_dir' ] = None
         self._dictionary[ 'noneable_strings' ][ 'media_background_bmp_path' ] = None
+        self._dictionary[ 'noneable_strings' ][ 'http_proxy' ] = None
+        self._dictionary[ 'noneable_strings' ][ 'https_proxy' ] = None
         
         self._dictionary[ 'strings' ] = {}
         
@@ -271,14 +309,15 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'strings' ][ 'current_colourset' ] = 'default'
         self._dictionary[ 'strings' ][ 'favourite_simple_downloader_formula' ] = 'all files linked by images in page'
         self._dictionary[ 'strings' ][ 'thumbnail_scroll_rate' ] = '1.0'
-        self._dictionary[ 'strings' ][ 'pause_character' ] = u'\u23F8'
-        self._dictionary[ 'strings' ][ 'stop_character' ] = u'\u23F9'
-        self._dictionary[ 'strings' ][ 'default_gug_name' ] = 'artstation artist lookup'
+        self._dictionary[ 'strings' ][ 'pause_character' ] = '\u23F8'
+        self._dictionary[ 'strings' ][ 'stop_character' ] = '\u23F9'
+        self._dictionary[ 'strings' ][ 'default_gug_name' ] = 'safebooru tag search'
         
         self._dictionary[ 'string_list' ] = {}
         
         self._dictionary[ 'string_list' ][ 'default_media_viewer_custom_shortcuts' ] = []
         self._dictionary[ 'string_list' ][ 'favourite_tags' ] = []
+        self._dictionary[ 'string_list' ][ 'advanced_file_deletion_reasons' ] = [ 'I do not like it.', 'It is bad quality.', 'It is not appropriate for this client.', 'Temporary delete--I want to bring it back later.' ]
         
         #
         
@@ -296,7 +335,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         example_tags = HydrusTags.CleanTags( [ 'creator:creator', 'series:series', 'title:title' ] )
         
-        import ClientGUITags
+        from . import ClientGUITags
         
         tsg = ClientGUITags.TagSummaryGenerator( namespace_info = namespace_info, separator = separator, example_tags = example_tags )
         
@@ -335,14 +374,6 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         #
         
-        client_files_default = os.path.join( db_dir, 'client_files' )
-        
-        self._dictionary[ 'client_files_locations_ideal_weights' ] = [ ( HydrusPaths.ConvertAbsPathToPortablePath( client_files_default ), 1.0 ) ]
-        self._dictionary[ 'client_files_locations_resized_thumbnail_override' ] = None
-        self._dictionary[ 'client_files_locations_full_size_thumbnail_override' ] = None
-        
-        #
-        
         self._dictionary[ 'default_file_import_options' ] = HydrusSerialisable.SerialisableDictionary()
         
         exclude_deleted = True
@@ -362,7 +393,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         present_already_in_inbox_files = False
         present_already_in_archive_files = False
         
-        import ClientImportOptions
+        from . import ClientImportOptions
         
         quiet_file_import_options = ClientImportOptions.FileImportOptions()
         
@@ -395,12 +426,14 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'frame_locations' ][ 'main_gui' ] = ( True, True, ( 800, 600 ), ( 20, 20 ), ( -1, -1 ), 'topleft', True, False )
         self._dictionary[ 'frame_locations' ][ 'manage_options_dialog' ] = ( False, False, None, None, ( -1, -1 ), 'topleft', False, False )
         self._dictionary[ 'frame_locations' ][ 'manage_subscriptions_dialog' ] = ( True, True, None, None, ( 1, -1 ), 'topleft', False, False )
+        self._dictionary[ 'frame_locations' ][ 'edit_subscription_dialog' ] = ( True, True, None, None, ( 1, -1 ), 'topleft', False, False )
         self._dictionary[ 'frame_locations' ][ 'manage_tags_dialog' ] = ( False, False, None, None, ( -1, 1 ), 'topleft', False, False )
         self._dictionary[ 'frame_locations' ][ 'manage_tags_frame' ] = ( False, False, None, None, ( -1, 1 ), 'topleft', False, False )
         self._dictionary[ 'frame_locations' ][ 'media_viewer' ] = ( True, True, ( 640, 480 ), ( 70, 70 ), ( -1, -1 ), 'topleft', True, True )
         self._dictionary[ 'frame_locations' ][ 'regular_dialog' ] = ( False, False, None, None, ( -1, -1 ), 'topleft', False, False )
         self._dictionary[ 'frame_locations' ][ 'review_services' ] = ( False, True, None, None, ( -1, -1 ), 'topleft', False, False )
         self._dictionary[ 'frame_locations' ][ 'deeply_nested_dialog' ] = ( False, False, None, None, ( -1, -1 ), 'topleft', False, False )
+        self._dictionary[ 'frame_locations' ][ 'regular_center_dialog' ] = ( False, False, None, None, ( -1, -1 ), 'center', False, False )
         
         #
         
@@ -427,6 +460,9 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._dictionary[ 'media_view' ][ HC.IMAGE_PNG ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, image_zoom_info )
         self._dictionary[ 'media_view' ][ HC.IMAGE_APNG ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, gif_zoom_info )
         self._dictionary[ 'media_view' ][ HC.IMAGE_GIF ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, gif_zoom_info )
+        self._dictionary[ 'media_view' ][ HC.IMAGE_WEBP ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, image_zoom_info )
+        self._dictionary[ 'media_view' ][ HC.IMAGE_TIFF ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, image_zoom_info )
+        self._dictionary[ 'media_view' ][ HC.IMAGE_ICON ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, CC.MEDIA_VIEWER_ACTION_SHOW_AS_NORMAL, image_zoom_info )
         
         if HC.PLATFORM_WINDOWS:
             
@@ -438,6 +474,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
             
         
         self._dictionary[ 'media_view' ][ HC.APPLICATION_PDF ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, null_zoom_info )
+        self._dictionary[ 'media_view' ][ HC.APPLICATION_PSD ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, null_zoom_info )
         self._dictionary[ 'media_view' ][ HC.APPLICATION_ZIP ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, null_zoom_info )
         self._dictionary[ 'media_view' ][ HC.APPLICATION_7Z ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, null_zoom_info )
         self._dictionary[ 'media_view' ][ HC.APPLICATION_RAR ] = ( CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, CC.MEDIA_VIEWER_ACTION_SHOW_OPEN_EXTERNALLY_BUTTON, null_zoom_info )
@@ -474,7 +511,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         #
         
-        import ClientMedia
+        from . import ClientMedia
         
         self._dictionary[ 'default_sort' ] = ClientMedia.MediaSort( ( 'system', CC.SORT_FILES_BY_FILESIZE ), CC.SORT_ASC )
         self._dictionary[ 'fallback_sort' ] = ClientMedia.MediaSort( ( 'system', CC.SORT_FILES_BY_IMPORT_TIME ), CC.SORT_ASC )
@@ -484,7 +521,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         loaded_dictionary = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_info )
         
-        for ( key, value ) in loaded_dictionary.items():
+        for ( key, value ) in list(loaded_dictionary.items()):
             
             if key in self._dictionary and isinstance( self._dictionary[ key ], dict ) and isinstance( value, dict ):
                 
@@ -505,7 +542,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
             
             if 'media_view' in loaded_dictionary:
                 
-                mimes = loaded_dictionary[ 'media_view' ].keys()
+                mimes = list(loaded_dictionary[ 'media_view' ].keys())
                 
                 for mime in mimes:
                     
@@ -630,38 +667,6 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def GetClientFilesLocationsToIdealWeights( self ):
-        
-        with self._lock:
-            
-            paths_to_weights = {}
-            
-            for ( portable_path, weight ) in self._dictionary[ 'client_files_locations_ideal_weights' ]:
-                
-                abs_path = HydrusPaths.ConvertPortablePathToAbsPath( portable_path )
-                
-                paths_to_weights[ abs_path ] = weight
-                
-            
-            resized_thumbnail_override = self._dictionary[ 'client_files_locations_resized_thumbnail_override' ]
-            
-            if resized_thumbnail_override is not None:
-                
-                resized_thumbnail_override = HydrusPaths.ConvertPortablePathToAbsPath( resized_thumbnail_override )
-                
-            
-            
-            full_size_thumbnail_override = self._dictionary[ 'client_files_locations_full_size_thumbnail_override' ]
-            
-            if full_size_thumbnail_override is not None:
-                
-                full_size_thumbnail_override = HydrusPaths.ConvertPortablePathToAbsPath( full_size_thumbnail_override )
-                
-            
-            return ( paths_to_weights, resized_thumbnail_override, full_size_thumbnail_override )
-            
-        
-    
     def GetColour( self, colour_type, colourset = None ):
         
         with self._lock:
@@ -713,7 +718,14 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            return self._dictionary[ 'duplicate_action_options' ][ duplicate_type ]
+            if duplicate_type in self._dictionary[ 'duplicate_action_options' ]:
+                
+                return self._dictionary[ 'duplicate_action_options' ][ duplicate_type ]
+                
+            else:
+                
+                return ClientDuplicates.DuplicateActionOptions( [], [] )
+                
             
         
     
@@ -737,7 +749,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            return self._dictionary[ 'frame_locations' ].items()
+            return list(self._dictionary[ 'frame_locations' ].items())
             
         
     
@@ -753,7 +765,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            return self._dictionary[ 'keys' ][ name ].decode( 'hex' )
+            return bytes.fromhex( self._dictionary[ 'keys' ][ name ] )
             
         
     
@@ -761,7 +773,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            return [ key.decode( 'hex' ) for key in self._dictionary[ 'key_list' ][ name ] ]
+            return [ bytes.fromhex( hex_key ) for hex_key in self._dictionary[ 'key_list' ][ name ] ]
             
         
     
@@ -888,7 +900,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            service_key_hex = service_key.encode( 'hex' )
+            service_key_hex = service_key.hex()
             
             stf = self._dictionary[ 'suggested_tags' ][ 'favourites' ]
             
@@ -919,39 +931,11 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def RemoveClientFilesLocation( self, location ):
-        
-        with self._lock:
-            
-            if len( self._dictionary[ 'client_files_locations_ideal_weights' ] ) < 2:
-                
-                raise Exception( 'Cannot remove any more files locations!' )
-                
-            
-            portable_location = HydrusPaths.ConvertAbsPathToPortablePath( location )
-            
-            self._dictionary[ 'client_files_locations_ideal_weights' ] = [ ( l, w ) for ( l, w ) in self._dictionary[ 'client_files_locations_ideal_weights' ] if l != portable_location ]
-            
-        
-    
     def SetBoolean( self, name, value ):
         
         with self._lock:
             
             self._dictionary[ 'booleans' ][ name ] = value
-            
-        
-    
-    def SetClientFilesLocation( self, location, weight ):
-        
-        with self._lock:
-            
-            portable_location = HydrusPaths.ConvertAbsPathToPortablePath( location )
-            weight = float( weight )
-            
-            self._dictionary[ 'client_files_locations_ideal_weights' ] = [ ( l, w ) for ( l, w ) in self._dictionary[ 'client_files_locations_ideal_weights' ] if l != portable_location ]
-            
-            self._dictionary[ 'client_files_locations_ideal_weights' ].append( ( portable_location, weight ) )
             
         
     
@@ -1028,14 +1012,6 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def SetFullsizeThumbnailOverride( self, full_size_thumbnail_override ):
-        
-        with self._lock:
-            
-            self._dictionary[ 'client_files_locations_full_size_thumbnail_override' ] = full_size_thumbnail_override
-            
-        
-    
     def SetInteger( self, name, value ):
         
         with self._lock:
@@ -1048,7 +1024,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            self._dictionary[ 'keys' ][ name ] = value.encode( 'hex' )
+            self._dictionary[ 'keys' ][ name ] = value.hex()
             
         
     
@@ -1056,7 +1032,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            self._dictionary[ 'key_list' ][ name ] = [ key.encode( 'hex' ) for key in value ]
+            self._dictionary[ 'key_list' ][ name ] = [ key.hex() for key in value ]
             
         
     
@@ -1100,14 +1076,6 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def SetResizedThumbnailOverride( self, resized_thumbnail_override ):
-        
-        with self._lock:
-            
-            self._dictionary[ 'client_files_locations_resized_thumbnail_override' ] = resized_thumbnail_override
-            
-        
-    
     def SetSimpleDownloaderFormulae( self, simple_downloader_formulae ):
         
         with self._lock:
@@ -1146,7 +1114,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            service_key_hex = service_key.encode( 'hex' )
+            service_key_hex = service_key.hex()
             
             self._dictionary[ 'suggested_tags' ][ 'favourites' ][ service_key_hex ] = list( tags )
             

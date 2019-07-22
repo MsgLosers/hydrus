@@ -1,10 +1,10 @@
-import ClientConstants as CC
-import ClientGUICommon
-import ClientGUIScrolledPanels
-import ClientGUITopLevelWindows
-import ClientImporting
-import ClientImportOptions
-import HydrusData
+from . import ClientConstants as CC
+from . import ClientGUICommon
+from . import ClientGUIScrolledPanels
+from . import ClientGUITopLevelWindows
+from . import ClientImporting
+from . import ClientImportOptions
+from . import HydrusData
 import os
 import wx
 
@@ -19,7 +19,7 @@ class EditCheckerOptions( ClientGUIScrolledPanels.EditPanel ):
         
         help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help for this panel -->', wx.Colour( 0, 0, 255 ) )
         
-        import ClientDefaults
+        from . import ClientDefaults
         
         defaults_panel = ClientGUICommon.StaticBox( self, 'reasonable defaults' )
         
@@ -38,7 +38,11 @@ class EditCheckerOptions( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
-        self._death_file_velocity = VelocityCtrl( self, min_time_delta = 60, days = True, hours = True, minutes = True, per_phrase = 'in', unit = 'files' )
+        min_unit_value = 0
+        max_unit_value = 1000
+        min_time_delta = 60
+        
+        self._death_file_velocity = VelocityCtrl( self, min_unit_value, max_unit_value, min_time_delta, days = True, hours = True, minutes = True, per_phrase = 'in', unit = 'files' )
         
         self._flat_check_period_checkbox = wx.CheckBox( self )
         
@@ -459,21 +463,21 @@ class TimeDeltaCtrl( wx.Panel ):
             
             if self._show_days:
                 
-                self._days.SetValue( value / 86400 )
+                self._days.SetValue( value // 86400 )
                 
                 value %= 86400
                 
             
             if self._show_hours:
                 
-                self._hours.SetValue( value / 3600 )
+                self._hours.SetValue( value // 3600 )
                 
                 value %= 3600
                 
             
             if self._show_minutes:
                 
-                self._minutes.SetValue( value / 60 )
+                self._minutes.SetValue( value // 60 )
                 
                 value %= 60
                 
@@ -489,11 +493,11 @@ class TimeDeltaCtrl( wx.Panel ):
     
 class VelocityCtrl( wx.Panel ):
     
-    def __init__( self, parent, min_time_delta = 60, days = False, hours = False, minutes = False, seconds = False, per_phrase = 'per', unit = None ):
+    def __init__( self, parent, min_unit_value, max_unit_value, min_time_delta, days = False, hours = False, minutes = False, seconds = False, per_phrase = 'per', unit = None ):
         
         wx.Panel.__init__( self, parent )
         
-        self._num = wx.SpinCtrl( self, min = 0, max = 1000, size = ( 60, -1 ) )
+        self._num = wx.SpinCtrl( self, min = min_unit_value, max = max_unit_value, size = ( 60, -1 ) )
         
         self._times = TimeDeltaCtrl( self, min = min_time_delta, days = days, hours = hours, minutes = minutes, seconds = seconds )
         

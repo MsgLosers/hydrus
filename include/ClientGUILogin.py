@@ -1,37 +1,38 @@
-import ClientConstants as CC
-import ClientData
-import ClientDefaults
-import ClientGUICommon
-import ClientGUIDialogs
-import ClientGUIDialogsQuick
-import ClientGUIMenus
-import ClientGUIControls
-import ClientGUIListBoxes
-import ClientGUIListCtrl
-import ClientGUIParsing
-import ClientGUIScrolledPanels
-import ClientGUIScrolledPanelsEdit
-import ClientGUISerialisable
-import ClientGUITopLevelWindows
-import ClientImporting
-import ClientNetworking
-import ClientNetworkingBandwidth
-import ClientNetworkingContexts
-import ClientNetworkingDomain
-import ClientNetworkingLogin
-import ClientNetworkingJobs
-import ClientNetworkingSessions
-import ClientParsing
-import ClientPaths
-import ClientSerialisable
-import ClientThreading
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
-import HydrusTags
-import HydrusText
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientDefaults
+from . import ClientGUICommon
+from . import ClientGUIDialogs
+from . import ClientGUIDialogsQuick
+from . import ClientGUIMenus
+from . import ClientGUIControls
+from . import ClientGUIFunctions
+from . import ClientGUIListBoxes
+from . import ClientGUIListCtrl
+from . import ClientGUIParsing
+from . import ClientGUIScrolledPanels
+from . import ClientGUIScrolledPanelsEdit
+from . import ClientGUISerialisable
+from . import ClientGUITopLevelWindows
+from . import ClientImporting
+from . import ClientNetworking
+from . import ClientNetworkingBandwidth
+from . import ClientNetworkingContexts
+from . import ClientNetworkingDomain
+from . import ClientNetworkingLogin
+from . import ClientNetworkingJobs
+from . import ClientNetworkingSessions
+from . import ClientParsing
+from . import ClientPaths
+from . import ClientSerialisable
+from . import ClientThreading
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
+from . import HydrusTags
+from . import HydrusText
 import itertools
 import os
 import re
@@ -115,7 +116,7 @@ class EditLoginCredentialsPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                 else:
                     
-                    st_label = string_match.ToUnicode()
+                    st_label = string_match.ToString()
                     
                 
             else:
@@ -124,13 +125,13 @@ class EditLoginCredentialsPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                     credential_definition.Test( value )
                     
-                    st_label = u'looks good \u2713'
+                    st_label = 'looks good \u2713'
                     
                     colour = ( 0, 127, 0 )
                     
                 except Exception as e:
                     
-                    st_label = HydrusData.ToUnicode( e )
+                    st_label = str( e )
                     
                 
             
@@ -161,7 +162,7 @@ class EditLoginCredentialsPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                 except Exception as e:
                     
-                    veto_errors.append( 'For ' + name + ': ' + HydrusData.ToUnicode( e ) )
+                    veto_errors.append( 'For ' + name + ': ' + str( e ) )
                     
                 
             
@@ -266,31 +267,34 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
         self._engine = engine
         self._login_scripts = login_scripts
         
-        domains_and_login_info_panel = ClientGUIListCtrl.BetterListCtrlPanel( self )
+        self._domains_to_login_after_ok = []
+        
+        self._domains_and_login_info_panel = ClientGUIListCtrl.BetterListCtrlPanel( self )
         
         columns = [ ( 'domain', 20 ), ( 'login script', -1 ), ( 'access given', 36 ), ( 'active?', 8 ), ( 'logged in now?', 28 ), ( 'validity', 28 ), ( 'recent error/delay?', 21 ) ]
         
-        self._domains_and_login_info = ClientGUIListCtrl.BetterListCtrl( domains_and_login_info_panel, 'domains_to_login_info', 8, 36, columns, self._ConvertDomainAndLoginInfoListCtrlTuples, use_simple_delete = True, activation_callback = self._EditCredentials )
+        self._domains_and_login_info = ClientGUIListCtrl.BetterListCtrl( self._domains_and_login_info_panel, 'domains_to_login_info', 8, 36, columns, self._ConvertDomainAndLoginInfoListCtrlTuples, use_simple_delete = True, activation_callback = self._EditCredentials )
         
-        domains_and_login_info_panel.SetListCtrl( self._domains_and_login_info )
+        self._domains_and_login_info_panel.SetListCtrl( self._domains_and_login_info )
         
-        domains_and_login_info_panel.AddButton( 'add', self._Add )
-        domains_and_login_info_panel.AddDeleteButton()
-        domains_and_login_info_panel.AddSeparator()
-        domains_and_login_info_panel.AddButton( 'change login script', self._EditLoginScript, enabled_only_on_selection = True )
-        domains_and_login_info_panel.AddButton( 'edit credentials', self._EditCredentials, enabled_check_func = self._CanEditCreds )
-        domains_and_login_info_panel.AddButton( 'flip active', self._FlipActive, enabled_only_on_selection = True )
-        domains_and_login_info_panel.AddSeparator()
-        domains_and_login_info_panel.AddButton( 'scrub invalidity', self._ScrubInvalidity, enabled_check_func = self._CanScrubInvalidity )
-        domains_and_login_info_panel.AddButton( 'scrub delays', self._ScrubDelays, enabled_check_func = self._CanScrubDelays )
-        domains_and_login_info_panel.NewButtonRow()
-        domains_and_login_info_panel.AddButton( 'reset login (delete cookies)', self._ClearSessions, enabled_only_on_selection = True )
+        self._domains_and_login_info_panel.AddButton( 'add', self._Add )
+        self._domains_and_login_info_panel.AddDeleteButton()
+        self._domains_and_login_info_panel.AddSeparator()
+        self._domains_and_login_info_panel.AddButton( 'edit credentials', self._EditCredentials, enabled_check_func = self._CanEditCreds )
+        self._domains_and_login_info_panel.AddButton( 'change login script', self._EditLoginScript, enabled_only_on_selection = True )
+        self._domains_and_login_info_panel.AddButton( 'flip active', self._FlipActive, enabled_only_on_selection = True )
+        self._domains_and_login_info_panel.AddSeparator()
+        self._domains_and_login_info_panel.AddButton( 'scrub invalidity', self._ScrubInvalidity, enabled_check_func = self._CanScrubInvalidity )
+        self._domains_and_login_info_panel.AddButton( 'scrub delays', self._ScrubDelays, enabled_check_func = self._CanScrubDelays )
+        self._domains_and_login_info_panel.NewButtonRow()
+        self._domains_and_login_info_panel.AddButton( 'do login now', self._DoLogin, enabled_check_func = self._CanDoLogin )
+        self._domains_and_login_info_panel.AddButton( 'reset login (delete cookies)', self._ClearSessions, enabled_only_on_selection = True )
         
         #
         
         listctrl_data = []
         
-        for ( login_domain, ( login_script_key_and_name, credentials, login_access_type, login_access_text, active, validity, validity_error_text, no_work_until, no_work_until_reason ) ) in domains_to_login_info.items():
+        for ( login_domain, ( login_script_key_and_name, credentials, login_access_type, login_access_text, active, validity, validity_error_text, no_work_until, no_work_until_reason ) ) in list(domains_to_login_info.items()):
             
             credentials_tuple = tuple( credentials.items() )
             
@@ -314,7 +318,7 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
         warning_st.SetForegroundColour( ( 128, 0, 0 ) )
         
         vbox.Add( warning_st, CC.FLAGS_CENTER )
-        vbox.Add( domains_and_login_info_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
+        vbox.Add( self._domains_and_login_info_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
         
         self.SetSizer( vbox )
         
@@ -452,12 +456,12 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
             validity_error_text = ''
             
             # hacky: if there are creds, is at least one not empty string?
-            creds_are_good = len( credentials ) == 0 or True in ( value != '' for value in credentials.values() )
+            creds_are_good = len( credentials ) == 0 or True in ( value != '' for value in list(credentials.values()) )
             
         except HydrusExceptions.ValidationException as e:
             
             validity = ClientNetworkingLogin.VALIDITY_INVALID
-            validity_error_text = HydrusData.ToUnicode( e )
+            validity_error_text = str( e )
             
             creds_are_good = False
             
@@ -493,6 +497,48 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
         self._domains_and_login_info.AddDatas( ( domain_and_login_info, ) )
         
         self._domains_and_login_info.Sort()
+        
+    
+    def _CanDoLogin( self ):
+        
+        domain_and_login_infos = self._domains_and_login_info.GetData( only_selected = True )
+        
+        for domain_and_login_info in domain_and_login_infos:
+            
+            ( login_domain, login_script_key_and_name, credentials_tuple, login_access_type, login_access_text, active, validity, validity_error_text, no_work_until, no_work_until_reason ) = domain_and_login_info
+            
+            if not active:
+                
+                continue
+                
+            
+            if validity == ClientNetworkingLogin.VALIDITY_INVALID:
+                
+                continue
+                
+            
+            try:
+                
+                login_script = self._GetLoginScript( login_script_key_and_name )
+                
+                network_context = ClientNetworkingContexts.NetworkContext( context_type = CC.NETWORK_CONTEXT_DOMAIN, context_data = login_domain )
+                
+                logged_in = login_script.IsLoggedIn( self._engine, network_context )
+                
+                if logged_in:
+                    
+                    continue
+                    
+                
+            except HydrusExceptions.DataMissing:
+                
+                continue
+                
+            
+            return True
+            
+        
+        return False
         
     
     def _CanEditCreds( self ):
@@ -582,6 +628,8 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
             
             self._domains_and_login_info.UpdateDatas()
             
+            self._domains_and_login_info_panel.UpdateButtons()
+            
         
     
     def _ConvertDomainAndLoginInfoListCtrlTuples( self, domain_and_login_info ):
@@ -645,7 +693,15 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
         pretty_login_script = sort_login_script
         pretty_access = access
         pretty_active = sort_active
-        pretty_validity = sort_validity
+        
+        if active:
+            
+            pretty_validity = sort_validity
+            
+        else:
+            
+            pretty_validity = ''
+            
         
         if logged_in:
             
@@ -669,6 +725,75 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
         sort_tuple = ( login_domain, sort_login_script, access, sort_active, sort_logged_in, sort_validity, no_work_until )
         
         return ( display_tuple, sort_tuple )
+        
+    
+    def _DoLogin( self ):
+        
+        domains_to_login = []
+        
+        domain_and_login_infos = self._domains_and_login_info.GetData( only_selected = True )
+        
+        for domain_and_login_info in domain_and_login_infos:
+            
+            ( login_domain, login_script_key_and_name, credentials_tuple, login_access_type, login_access_text, active, validity, validity_error_text, no_work_until, no_work_until_reason ) = domain_and_login_info
+            
+            if not active:
+                
+                continue
+                
+            
+            if validity == ClientNetworkingLogin.VALIDITY_INVALID:
+                
+                continue
+                
+            
+            try:
+                
+                login_script = self._GetLoginScript( login_script_key_and_name )
+                
+                network_context = ClientNetworkingContexts.NetworkContext( context_type = CC.NETWORK_CONTEXT_DOMAIN, context_data = login_domain )
+                
+                logged_in = login_script.IsLoggedIn( self._engine, network_context )
+                
+                if logged_in:
+                    
+                    continue
+                    
+                
+            except HydrusExceptions.DataMissing:
+                
+                continue
+                
+            
+            domains_to_login.append( login_domain )
+            
+        
+        if len( domains_to_login ) == 0:
+            
+            wx.MessageBox( 'Unfortunately, none of the selected domains appear able to log in. Do you need to activate or scrub something somewhere?' )
+            
+        else:
+            
+            domains_to_login.sort()
+            
+            message = 'It looks like the following domains can log in:'
+            message += os.linesep * 2
+            message += os.linesep.join( domains_to_login )
+            message += os.linesep * 2
+            message += 'The dialog will ok and the login attempts will start. Is this ok?'
+            
+            with ClientGUIDialogs.DialogYesNo( self, message ) as dlg:
+                
+                if dlg.ShowModal() != wx.ID_YES:
+                    
+                    return
+                    
+                
+            
+            self._domains_to_login_after_ok = domains_to_login
+            
+            self.GetParent().DoOK()
+            
         
     
     def _EditCredentials( self ):
@@ -725,12 +850,12 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
                 validity_error_text = ''
                 
                 # hacky: if there are creds, is at least one not empty string?
-                creds_are_good = len( credentials ) == 0 or True in ( value != '' for value in credentials.values() )
+                creds_are_good = len( credentials ) == 0 or True in ( value != '' for value in list(credentials.values()) )
                 
             except HydrusExceptions.ValidationException as e:
                 
                 validity = ClientNetworkingLogin.VALIDITY_INVALID
-                validity_error_text = HydrusData.ToUnicode( e )
+                validity_error_text = str( e )
                 
                 creds_are_good = False
                 
@@ -779,20 +904,44 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
             
             try:
                 
-                login_script = self._GetLoginScript( login_script_key_and_name )
+                current_login_script = self._GetLoginScript( login_script_key_and_name )
                 
             except HydrusExceptions.DataMissing:
                 
-                login_script = None
+                current_login_script = None
                 
             
-            choice_tuples = [ ( login_script.GetName(), login_script ) for login_script in self._login_scripts ]
+            potential_login_scripts = list( self._login_scripts )
+            
+            potential_login_scripts.sort( key = lambda ls: ls.GetName() )
+            
+            matching_potential_login_scripts = [ login_script for login_script in potential_login_scripts if login_domain in login_script.GetExampleDomains() ]
+            unmatching_potential_login_scripts = [ login_script for login_script in potential_login_scripts if login_domain not in login_script.GetExampleDomains() ]
+            
+            choice_tuples = [ ( login_script.GetName(), login_script ) for login_script in matching_potential_login_scripts ]
+            
+            if len( matching_potential_login_scripts ) > 0 and len( unmatching_potential_login_scripts ) > 0:
+                
+                choice_tuples.append( ( '------', None ) )
+                
+            
+            choice_tuples.extend( [ ( login_script.GetName(), login_script ) for login_script in unmatching_potential_login_scripts ] )
             
             try:
                 
-                login_script = ClientGUIDialogsQuick.SelectFromList( self, 'select the login script to use', choice_tuples, value_to_select = login_script )
+                login_script = ClientGUIDialogsQuick.SelectFromList( self, 'select the login script to use', choice_tuples, value_to_select = current_login_script, sort_tuples = False )
                 
             except HydrusExceptions.CancelledException:
+                
+                break
+                
+            
+            if login_script is None:
+                
+                break
+                
+            
+            if login_script == current_login_script:
                 
                 break
                 
@@ -847,7 +996,7 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
             except HydrusExceptions.ValidationException as e:
                 
                 validity = ClientNetworkingLogin.VALIDITY_INVALID
-                validity_error_text = HydrusData.ToUnicode( e )
+                validity_error_text = str( e )
                 
                 creds_are_good = False
                 
@@ -965,7 +1114,7 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
             except HydrusExceptions.ValidationException as e:
                 
                 validity = ClientNetworkingLogin.VALIDITY_INVALID
-                validity_error_text = HydrusData.ToUnicode( e )
+                validity_error_text = str( e )
                 
             
             scrubbed_domain_and_login_info = ( login_domain, login_script_key_and_name, credentials_tuple, login_access_type, login_access_text, active, validity, validity_error_text, no_work_until, no_work_until_reason )
@@ -975,6 +1124,11 @@ class EditLoginsPanel( ClientGUIScrolledPanels.EditPanel ):
             
         
         self._domains_and_login_info.Sort()
+        
+    
+    def GetDomainsToLoginAfterOK( self ):
+        
+        return self._domains_to_login_after_ok
         
     
     def GetValue( self ):
@@ -1034,14 +1188,14 @@ class ReviewTestResultPanel( ClientGUIScrolledPanels.ReviewPanel ):
         self._body = wx.TextCtrl( self, style = wx.TE_MULTILINE )
         self._body.SetEditable( False )
         
-        min_size = ClientGUICommon.ConvertTextToPixels( self._body, ( 64, 3 ) )
+        min_size = ClientGUIFunctions.ConvertTextToPixels( self._body, ( 64, 3 ) )
         
         self._body.SetMinClientSize( min_size )
         
         self._data_preview = wx.TextCtrl( self, style = wx.TE_MULTILINE )
         self._data_preview.SetEditable( False )
         
-        min_size = ClientGUICommon.ConvertTextToPixels( self._data_preview, ( 64, 8 ) )
+        min_size = ClientGUIFunctions.ConvertTextToPixels( self._data_preview, ( 64, 8 ) )
         
         self._data_preview.SetMinClientSize( min_size )
         
@@ -1051,14 +1205,14 @@ class ReviewTestResultPanel( ClientGUIScrolledPanels.ReviewPanel ):
         self._temp_variables = wx.TextCtrl( self, style = wx.TE_MULTILINE )
         self._temp_variables.SetEditable( False )
         
-        min_size = ClientGUICommon.ConvertTextToPixels( self._temp_variables, ( 64, 6 ) )
+        min_size = ClientGUIFunctions.ConvertTextToPixels( self._temp_variables, ( 64, 6 ) )
         
         self._temp_variables.SetMinClientSize( min_size )
         
         self._cookies = wx.TextCtrl( self, style = wx.TE_MULTILINE )
         self._cookies.SetEditable( False )
         
-        min_size = ClientGUICommon.ConvertTextToPixels( self._cookies, ( 64, 6 ) )
+        min_size = ClientGUIFunctions.ConvertTextToPixels( self._cookies, ( 64, 6 ) )
         
         self._cookies.SetMinClientSize( min_size )
         
@@ -1076,11 +1230,11 @@ class ReviewTestResultPanel( ClientGUIScrolledPanels.ReviewPanel ):
                 
             except:
                 
-                self._body.SetValue( HydrusData.ToUnicode( body ) )
+                self._body.SetValue( str( body ) )
                 
             
         
-        self._data_preview.SetValue( HydrusData.ToUnicode( self._downloaded_data[:1024] ) )
+        self._data_preview.SetValue( str( self._downloaded_data[:1024] ) )
         
         self._temp_variables.SetValue( os.linesep.join( new_temp_strings ) )
         self._cookies.SetValue( os.linesep.join( new_cookie_strings ) )
@@ -1351,7 +1505,7 @@ class EditLoginScriptPanel( ClientGUIScrolledPanels.EditPanel ):
         
         string_match = credential_definition.GetStringMatch()
         
-        value = string_match.ToUnicode()
+        value = string_match.ToString()
         
         pretty_name = name
         pretty_type_string = type_string
@@ -1489,7 +1643,7 @@ class EditLoginScriptPanel( ClientGUIScrolledPanels.EditPanel ):
                 
             except Exception as e:
                 
-                login_result = HydrusData.ToUnicode( e )
+                login_result = str( e )
                 
                 HydrusData.ShowException( e )
                 
@@ -1721,7 +1875,7 @@ class EditLoginScriptPanel( ClientGUIScrolledPanels.EditPanel ):
             
             message = 'There is a problem with this script. The reason is:'
             message += os.linesep * 2
-            message += HydrusData.ToUnicode( e )
+            message += str( e )
             message += os.linesep * 2
             message += 'Do you want to proceed with this invalid script, or go back and fix it?'
             
@@ -1958,7 +2112,7 @@ class EditLoginStepPanel( ClientGUIScrolledPanels.EditPanel ):
         
         vbox = ClientGUICommon.BetterBoxSizer( wx.VERTICAL )
         
-        vbox.Add( gridbox, CC.FLAGS_EXPAND_PERPENDICULAR )
+        vbox.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         vbox.Add( required_credentials_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
         vbox.Add( static_args_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
         vbox.Add( temp_args_panel, CC.FLAGS_EXPAND_BOTH_WAYS )

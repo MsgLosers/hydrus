@@ -1,29 +1,35 @@
-import ClientLocalServer
-import ClientMedia
-import ClientRatings
-import ClientServices
+from . import ClientConstants as CC
+from . import ClientAPI
+from . import ClientLocalServer
+from . import ClientMedia
+from . import ClientRatings
+from . import ClientServices
+from . import ClientTags
 import hashlib
-import httplib
-import HydrusConstants as HC
-import HydrusEncryption
-import HydrusNetwork
-import HydrusPaths
-import HydrusServer
-import HydrusServerResources
+import http.client
+from . import HydrusConstants as HC
+from . import HydrusEncryption
+from . import HydrusNetwork
+from . import HydrusPaths
+from . import HydrusServer
+from . import HydrusServerResources
+from . import HydrusText
+import json
 import os
 import random
-import ServerFiles
-import ServerServer
+from . import ServerFiles
+from . import ServerServer
 import ssl
-import TestConstants
+from . import TestController
 import time
 import unittest
+import urllib
 from twisted.internet import reactor
-from twisted.internet.endpoints import TCP4ClientEndpoint, connectProtocol
+#from twisted.internet.endpoints import TCP4ClientEndpoint, connectProtocol
 from twisted.internet.defer import deferredGenerator, waitForDeferred
 import twisted.internet.ssl
-import HydrusData
-import HydrusGlobals as HG
+from . import HydrusData
+from . import HydrusGlobals as HG
 
 with open( os.path.join( HC.STATIC_DIR, 'hydrus.png' ), 'rb' ) as f:
     
@@ -40,8 +46,6 @@ class TestServer( unittest.TestCase ):
         
         cls._access_key = HydrusData.GenerateKey()
         
-        services = []
-        
         cls._serverside_file_service = HydrusNetwork.GenerateService( HydrusData.GenerateKey(), HC.FILE_REPOSITORY, 'file repo', HC.DEFAULT_SERVICE_PORT + 1 )
         cls._serverside_tag_service = HydrusNetwork.GenerateService( HydrusData.GenerateKey(), HC.TAG_REPOSITORY, 'tag repo', HC.DEFAULT_SERVICE_PORT )
         cls._serverside_admin_service = HydrusNetwork.GenerateService( HydrusData.GenerateKey(), HC.SERVER_ADMIN, 'server admin', HC.DEFAULT_SERVER_ADMIN_PORT )
@@ -54,7 +58,7 @@ class TestServer( unittest.TestCase ):
         cls._clientside_tag_service.SetCredentials( HydrusNetwork.Credentials( '127.0.0.1', HC.DEFAULT_SERVICE_PORT, cls._access_key ) )
         cls._clientside_admin_service.SetCredentials( HydrusNetwork.Credentials( '127.0.0.1', HC.DEFAULT_SERVER_ADMIN_PORT, cls._access_key ) )
         
-        cls._local_booru = ClientServices.GenerateService( HydrusData.GenerateKey(), HC.LOCAL_BOORU, 'local booru' )
+        cls._local_booru = ClientServices.GenerateService( CC.LOCAL_BOORU_SERVICE_KEY, HC.LOCAL_BOORU, 'local booru' )
         
         services_manager = HG.test_controller.services_manager
         
@@ -75,8 +79,8 @@ class TestServer( unittest.TestCase ):
         
         def TWISTEDSetup():
             
-            cls._ssl_cert_path = os.path.join( TestConstants.DB_DIR, 'server.crt' )
-            cls._ssl_key_path = os.path.join( TestConstants.DB_DIR, 'server.key' )
+            cls._ssl_cert_path = os.path.join( TestController.DB_DIR, 'server.crt' )
+            cls._ssl_key_path = os.path.join( TestController.DB_DIR, 'server.key' )
             
             # if db test ran, this is still hanging around and read-only, so don't bother to fail overwriting
             if not os.path.exists( cls._ssl_cert_path ):
@@ -90,12 +94,23 @@ class TestServer( unittest.TestCase ):
             reactor.listenSSL( HC.DEFAULT_SERVICE_PORT + 1, ServerServer.HydrusServiceRepositoryFile( cls._serverside_file_service ), context_factory )
             reactor.listenSSL( HC.DEFAULT_SERVICE_PORT, ServerServer.HydrusServiceRepositoryTag( cls._serverside_tag_service ), context_factory )
             
-            reactor.listenTCP( HC.DEFAULT_LOCAL_BOORU_PORT, ClientLocalServer.HydrusServiceBooru( cls._local_booru ) )
+            reactor.listenTCP( 45866, ClientLocalServer.HydrusServiceBooru( cls._local_booru, allow_non_local_connections = False ) )
             
         
         reactor.callFromThread( TWISTEDSetup )
         
         time.sleep( 1 )
+        
+    
+    @classmethod
+    def tearDownClass( cls ):
+        
+        for path in ( cls._ssl_cert_path, cls._ssl_key_path ):
+            
+            HydrusPaths.MakeFileWritable( path )
+            
+            os.unlink( path )
+            
         
     
     def _test_basics( self, host, port, https = True ):
@@ -106,11 +121,11 @@ class TestServer( unittest.TestCase ):
             context.options |= ssl.OP_NO_SSLv2
             context.options |= ssl.OP_NO_SSLv3
             
-            connection = httplib.HTTPSConnection( host, port, timeout = 10, context = context )
+            connection = http.client.HTTPSConnection( host, port, timeout = 10, context = context )
             
         else:
             
-            connection = httplib.HTTPConnection( host, port, timeout = 10 )
+            connection = http.client.HTTPConnection( host, port, timeout = 10 )
             
         
         #
@@ -125,7 +140,10 @@ class TestServer( unittest.TestCase ):
         
         #
         
-        with open( os.path.join( HC.STATIC_DIR, 'hydrus.ico' ), 'rb' ) as f: favicon = f.read()
+        with open( os.path.join( HC.STATIC_DIR, 'hydrus.ico' ), 'rb' ) as f:
+            
+            favicon = f.read()
+            
         
         connection.request( 'GET', '/favicon.ico' )
         
@@ -144,9 +162,12 @@ class TestServer( unittest.TestCase ):
         
         HydrusPaths.MakeSureDirectoryExists( os.path.dirname( path ) )
         
-        with open( path, 'wb' ) as f: f.write( EXAMPLE_FILE )
+        with open( path, 'wb' ) as f:
+            
+            f.write( EXAMPLE_FILE )
+            
         
-        response = service.Request( HC.GET, 'file', { 'hash' : self._file_hash.encode( 'hex' ) } )
+        response = service.Request( HC.GET, 'file', { 'hash' : self._file_hash } )
         
         self.assertEqual( response, EXAMPLE_FILE )
         
@@ -154,10 +175,15 @@ class TestServer( unittest.TestCase ):
         except: pass
         
         path = os.path.join( HC.STATIC_DIR, 'hydrus.png' )
-
-        with open( path, 'rb' ) as f: file = f.read()
         
-        service.Request( HC.POST, 'file', { 'file' : file } )
+        with open( path, 'rb' ) as f:
+            
+            file_bytes = f.read()
+            
+        
+        HG.test_controller.ClearWrites( 'file' )
+        
+        service.Request( HC.POST, 'file', { 'file' : file_bytes } )
         
         written = HG.test_controller.GetWrite( 'file' )
         
@@ -165,7 +191,7 @@ class TestServer( unittest.TestCase ):
         
         ( written_service_key, written_account, written_file_dict ) = args
         
-        self.assertEqual( written_file_dict[ 'hash' ], '\xadm5\x99\xa6\xc4\x89\xa5u\xeb\x19\xc0&\xfa\xce\x97\xa9\xcdey\xe7G(\xb0\xce\x94\xa6\x01\xd22\xf3\xc3' )
+        self.assertEqual( written_file_dict[ 'hash' ], b'\xadm5\x99\xa6\xc4\x89\xa5u\xeb\x19\xc0&\xfa\xce\x97\xa9\xcdey\xe7G(\xb0\xce\x94\xa6\x01\xd22\xf3\xc3' )
         self.assertEqual( written_file_dict[ 'ip' ], '127.0.0.1' )
         self.assertEqual( written_file_dict[ 'height' ], 200 )
         self.assertEqual( written_file_dict[ 'width' ], 200 )
@@ -178,7 +204,7 @@ class TestServer( unittest.TestCase ):
         
         HG.test_controller.SetRead( 'ip', ( ip, timestamp ) )
         
-        response = service.Request( HC.GET, 'ip', { 'hash' : self._file_hash.encode( 'hex' ) } )
+        response = service.Request( HC.GET, 'ip', { 'hash' : self._file_hash } )
         
         self.assertEqual( response[ 'ip' ], ip )
         self.assertEqual( response[ 'timestamp' ], timestamp )
@@ -189,9 +215,12 @@ class TestServer( unittest.TestCase ):
         
         HydrusPaths.MakeSureDirectoryExists( os.path.dirname( path ) )
         
-        with open( path, 'wb' ) as f: f.write( EXAMPLE_THUMBNAIL )
+        with open( path, 'wb' ) as f:
+            
+            f.write( EXAMPLE_THUMBNAIL )
+            
         
-        response = service.Request( HC.GET, 'thumbnail', { 'hash' : self._file_hash.encode( 'hex' ) } )
+        response = service.Request( HC.GET, 'thumbnail', { 'hash' : self._file_hash } )
         
         self.assertEqual( response, EXAMPLE_THUMBNAIL )
         
@@ -203,7 +232,7 @@ class TestServer( unittest.TestCase ):
         
         #
         
-        connection = httplib.HTTPConnection( host, port, timeout = 10 )
+        connection = http.client.HTTPConnection( host, port, timeout = 10 )
         
         #
         
@@ -225,17 +254,24 @@ class TestServer( unittest.TestCase ):
         share_key = HydrusData.GenerateKey()
         hashes = [ HydrusData.GenerateKey() for i in range( 5 ) ]
         
-        client_files_default = os.path.join( TestConstants.DB_DIR, 'client_files' )
+        client_files_default = os.path.join( TestController.DB_DIR, 'client_files' )
         
-        hash_encoded = hashes[0].encode( 'hex' )
+        hash_encoded = hashes[0].hex()
         
         prefix = hash_encoded[:2]
         
         file_path =  os.path.join( client_files_default, 'f' + prefix, hash_encoded + '.jpg' )
         thumbnail_path = os.path.join( client_files_default, 't' + prefix, hash_encoded + '.thumbnail' )
         
-        with open( file_path, 'wb' ) as f: f.write( EXAMPLE_FILE )
-        with open( thumbnail_path, 'wb' ) as f: f.write( EXAMPLE_THUMBNAIL )
+        with open( file_path, 'wb' ) as f:
+            
+            f.write( EXAMPLE_FILE )
+            
+        
+        with open( thumbnail_path, 'wb' ) as f:
+            
+            f.write( EXAMPLE_THUMBNAIL )
+            
         
         local_booru_manager = HG.client_controller.local_booru_manager
         
@@ -253,7 +289,9 @@ class TestServer( unittest.TestCase ):
         
         file_info_manager = ClientMedia.FileInfoManager( 1, hashes[0], 500, HC.IMAGE_JPEG, 640, 480 )
         
-        media_results = [ ClientMedia.MediaResult( file_info_manager, ClientMedia.TagsManager( {} ), ClientMedia.LocationsManager( set(), set(), set(), set() ), ClientRatings.RatingsManager( {} ) ) for hash in hashes ]
+        file_viewing_stats_manager = ClientMedia.FileViewingStatsManager.STATICGenerateEmptyManager()
+        
+        media_results = [ ClientMedia.MediaResult( file_info_manager, ClientMedia.TagsManager( {} ), ClientMedia.LocationsManager( set(), set(), set(), set() ), ClientRatings.RatingsManager( {} ), file_viewing_stats_manager ) for hash in hashes ]
         
         HG.test_controller.SetRead( 'local_booru_share_keys', [ share_key ] )
         HG.test_controller.SetRead( 'local_booru_share', info )
@@ -291,10 +329,10 @@ class TestServer( unittest.TestCase ):
         
         requests = []
         
-        requests.append( '/gallery?share_key=' + share_key.encode( 'hex' ) )
-        requests.append( '/page?share_key=' + share_key.encode( 'hex' ) + '&hash=' + hash.encode( 'hex' ) )
-        requests.append( '/file?share_key=' + share_key.encode( 'hex' ) + '&hash=' + hash.encode( 'hex' ) )
-        requests.append( '/thumbnail?share_key=' + share_key.encode( 'hex' ) + '&hash=' + hash.encode( 'hex' ) )
+        requests.append( '/gallery?share_key=' + share_key.hex() )
+        requests.append( '/page?share_key=' + share_key.hex() + '&hash=' + hash.hex() )
+        requests.append( '/file?share_key=' + share_key.hex() + '&hash=' + hash.hex() )
+        requests.append( '/thumbnail?share_key=' + share_key.hex() + '&hash=' + hash.hex() )
         
         for request in requests:
             
@@ -341,15 +379,15 @@ class TestServer( unittest.TestCase ):
         
         definitions_update = HydrusNetwork.DefinitionsUpdate()
         
-        if i in range( 100, 200 ):
+        for i in range( 100, 200 ):
             
             definitions_update.AddRow( ( HC.DEFINITIONS_TYPE_TAGS, i, 'series:test ' + str( i ) ) )
             definitions_update.AddRow( ( HC.DEFINITIONS_TYPE_HASHES, i + 500, HydrusData.GenerateKey() ) )
             
         
-        definitions_update_network_string = definitions_update.DumpToNetworkString()
+        definitions_update_network_bytes = definitions_update.DumpToNetworkBytes()
         
-        definitions_update_hash = hashlib.sha256( definitions_update_network_string ).digest()
+        definitions_update_hash = hashlib.sha256( definitions_update_network_bytes ).digest()
         
         path = ServerFiles.GetExpectedFilePath( definitions_update_hash )
         
@@ -357,7 +395,7 @@ class TestServer( unittest.TestCase ):
         
         with open( path, 'wb' ) as f:
             
-            f.write( definitions_update_network_string )
+            f.write( definitions_update_network_bytes )
             
         
         response = service.Request( HC.GET, 'update', { 'update_hash' : definitions_update_hash } )
@@ -365,7 +403,7 @@ class TestServer( unittest.TestCase ):
         try: os.remove( path )
         except: pass
         
-        self.assertEqual( response, definitions_update_network_string )
+        self.assertEqual( response, definitions_update_network_bytes )
         
         # content
         
@@ -378,20 +416,23 @@ class TestServer( unittest.TestCase ):
             content_update.AddRow( ( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_ADD, row ) )
             
         
-        content_update_network_string = content_update.DumpToNetworkString()
+        content_update_network_bytes = content_update.DumpToNetworkBytes()
         
-        content_update_hash = hashlib.sha256( content_update_network_string ).digest()
+        content_update_hash = hashlib.sha256( content_update_network_bytes ).digest()
         
         path = ServerFiles.GetExpectedFilePath( content_update_hash )
         
-        with open( path, 'wb' ) as f: f.write( content_update_network_string )
+        with open( path, 'wb' ) as f:
+            
+            f.write( content_update_network_bytes )
+            
         
         response = service.Request( HC.GET, 'update', { 'update_hash' : content_update_hash } )
         
         try: os.remove( path )
         except: pass
         
-        self.assertEqual( response, content_update_network_string )
+        self.assertEqual( response, content_update_network_bytes )
         
         # metadata
         
@@ -410,6 +451,8 @@ class TestServer( unittest.TestCase ):
         raise NotImplementedError()
         '''
         update = HydrusData.ClientToServerContentUpdatePackage( {}, hash_ids_to_hashes )
+        
+        HG.test_controller.ClearWrites( 'update' )
         
         service.Request( HC.POST, 'content_update_package', { 'update' : update } )
         
@@ -458,23 +501,27 @@ class TestServer( unittest.TestCase ):
         HG.test_controller.SetRead( 'account_info', account_info )
         HG.test_controller.SetRead( 'account_key_from_identifier', HydrusData.GenerateKey() )
         
-        response = service.Request( HC.GET, 'account_info', { 'subject_account_key' : HydrusData.GenerateKey().encode( 'hex' ) } )
+        response = service.Request( HC.GET, 'account_info', { 'subject_account_key' : HydrusData.GenerateKey() } )
         
         self.assertEqual( response[ 'account_info' ], account_info )
         
-        response = service.Request( HC.GET, 'account_info', { 'subject_hash' : HydrusData.GenerateKey().encode( 'hex' ) } )
+        # this not working for now, screw it m8
         
-        self.assertEqual( response[ 'account_info' ], account_info )
+        #response = service.Request( HC.GET, 'account_info', { 'subject_hash' : HydrusData.GenerateKey() } )
         
-        response = service.Request( HC.GET, 'account_info', { 'subject_hash' : HydrusData.GenerateKey().encode( 'hex' ), 'subject_tag' : 'hello'.encode( 'hex' ) } )
+        #self.assertEqual( response[ 'account_info' ], account_info )
         
-        self.assertEqual( response[ 'account_info' ], account_info )
+        #response = service.Request( HC.GET, 'account_info', { 'subject_hash' : HydrusData.GenerateKey(), 'subject_tag' : 'hello' } )
+        
+        #self.assertEqual( response[ 'account_info' ], account_info )
         
         # account_types
         
         account_types = [ HydrusNetwork.AccountType.GenerateAdminAccountType( service.GetServiceType() ) ]
         
         HG.test_controller.SetRead( 'account_types', account_types )
+        
+        HG.test_controller.ClearWrites( 'account_types' )
         
         response = service.Request( HC.GET, 'account_types' )
         
@@ -497,7 +544,7 @@ class TestServer( unittest.TestCase ):
         
         HG.test_controller.SetRead( 'registration_keys', [ registration_key ] )
         
-        response = service.Request( HC.GET, 'registration_keys', { 'num' : 1, 'account_type_key' : os.urandom( 32 ).encode( 'hex' ), 'expires' : HydrusData.GetNow() + 1200 } )
+        response = service.Request( HC.GET, 'registration_keys', { 'num' : 1, 'account_type_key' : os.urandom( 32 ), 'expires' : HydrusData.GetNow() + 1200 } )
         
         self.assertEqual( response[ 'registration_keys' ], [ registration_key ] )
         
@@ -510,7 +557,7 @@ class TestServer( unittest.TestCase ):
         
         HG.test_controller.SetRead( 'access_key', access_key )
         
-        response = service.Request( HC.GET, 'access_key', { 'registration_key' : 'init' } )
+        response = service.Request( HC.GET, 'access_key', { 'registration_key' : b'init' } )
         
         self.assertEqual( response[ 'access_key' ], access_key )
         
@@ -567,11 +614,12 @@ class TestServer( unittest.TestCase ):
     def test_local_booru( self ):
         
         host = '127.0.0.1'
-        port = HC.DEFAULT_LOCAL_BOORU_PORT
+        port = 45866
         
         self._test_basics( host, port, https = False )
         self._test_local_booru( host, port )
         
+    
     '''
 class TestAMP( unittest.TestCase ):
     

@@ -3,32 +3,29 @@ import sys
 
 # dirs
 
-BASE_DIR = sys.path[0]
-
-if BASE_DIR == '':
+if getattr( sys, 'frozen', False ):
     
-    BASE_DIR = os.getcwdu()
+    RUNNING_FROM_FROZEN_BUILD = True
+    
+    # we are in a pyinstaller frozen app
+    
+    BASE_DIR = getattr( sys, '_MEIPASS', None )
+    
+    if BASE_DIR is None:
+        
+        raise Exception( 'It seems this hydrus is running from a frozen bundle, but there was no _MEIPASS variable under sys to define the bundle directory.' )
+        
     
 else:
     
-    try:
-        
-        BASE_DIR = BASE_DIR.decode( 'utf-8' )
-        
-    except:
-        
-        pass
-        
+    RUNNING_FROM_FROZEN_BUILD = False
     
-BIN_DIR = os.path.join( BASE_DIR, 'bin' )
-HELP_DIR = os.path.join( BASE_DIR, 'help' )
-INCLUDE_DIR = os.path.join( BASE_DIR, 'include' )
-STATIC_DIR = os.path.join( BASE_DIR, 'static' )
-
-DEFAULT_DB_DIR = os.path.join( BASE_DIR, 'db' )
-LICENSE_PATH = os.path.join( BASE_DIR, 'license.txt' )
-
-#
+    BASE_DIR = sys.path[0]
+    
+    if BASE_DIR == '':
+        
+        BASE_DIR = os.getcwd()
+        
 
 PLATFORM_WINDOWS = False
 PLATFORM_OSX  = False
@@ -36,9 +33,30 @@ PLATFORM_LINUX = False
 
 if sys.platform == 'win32': PLATFORM_WINDOWS = True
 elif sys.platform == 'darwin': PLATFORM_OSX = True
-elif sys.platform == 'linux2': PLATFORM_LINUX = True
+elif sys.platform == 'linux': PLATFORM_LINUX = True
 
 RUNNING_FROM_SOURCE = sys.argv[0].endswith( '.py' ) or sys.argv[0].endswith( '.pyw' )
+RUNNING_FROM_OSX_APP = os.path.exists( os.path.join( BASE_DIR, 'running_from_app' ) )
+
+BIN_DIR = os.path.join( BASE_DIR, 'bin' )
+HELP_DIR = os.path.join( BASE_DIR, 'help' )
+INCLUDE_DIR = os.path.join( BASE_DIR, 'include' )
+STATIC_DIR = os.path.join( BASE_DIR, 'static' )
+
+DEFAULT_DB_DIR = os.path.join( BASE_DIR, 'db' )
+
+if PLATFORM_OSX:
+    
+    USERPATH_DB_DIR = os.path.join( os.path.expanduser( '~' ), 'Library', 'Hydrus' )
+    
+else:
+    
+    USERPATH_DB_DIR = os.path.join( os.path.expanduser( '~' ), 'Hydrus' )
+    
+
+LICENSE_PATH = os.path.join( BASE_DIR, 'license.txt' )
+
+#
 
 import sqlite3
 import traceback
@@ -49,9 +67,10 @@ options = {}
 # Misc
 
 NETWORK_VERSION = 18
-SOFTWARE_VERSION = 330
+SOFTWARE_VERSION = 360
+CLIENT_API_VERSION = 9
 
-UNSCALED_THUMBNAIL_DIMENSIONS = ( 200, 200 )
+SERVER_THUMBNAIL_DIMENSIONS = ( 200, 200 )
 
 HYDRUS_KEY_LENGTH = 32
 
@@ -111,6 +130,7 @@ CONTENT_TYPE_HASH = 15
 CONTENT_TYPE_TIMESTAMP = 16
 CONTENT_TYPE_TITLE = 17
 CONTENT_TYPE_NOTES = 18
+CONTENT_TYPE_FILE_VIEWING_STATS = 19
 
 content_type_string_lookup = {}
 
@@ -133,6 +153,7 @@ content_type_string_lookup[ CONTENT_TYPE_HASH ] = 'hash'
 content_type_string_lookup[ CONTENT_TYPE_TIMESTAMP ] = 'timestamp'
 content_type_string_lookup[ CONTENT_TYPE_TITLE ] = 'title'
 content_type_string_lookup[ CONTENT_TYPE_NOTES ] = 'notes'
+content_type_string_lookup[ CONTENT_TYPE_FILE_VIEWING_STATS ] = 'file viewing stats'
 
 REPOSITORY_CONTENT_TYPES = [ CONTENT_TYPE_FILES, CONTENT_TYPE_MAPPINGS, CONTENT_TYPE_TAG_PARENTS, CONTENT_TYPE_TAG_SIBLINGS ]
 
@@ -174,27 +195,31 @@ content_update_string_lookup[ CONTENT_UPDATE_FLIP ] = 'flip on/off'
 DEFINITIONS_TYPE_HASHES = 0
 DEFINITIONS_TYPE_TAGS = 1
 
-DUPLICATE_UNKNOWN = 0
-DUPLICATE_NOT_DUPLICATE = 1
+DUPLICATE_POTENTIAL = 0
+DUPLICATE_FALSE_POSITIVE = 1
 DUPLICATE_SAME_QUALITY = 2
 DUPLICATE_ALTERNATE = 3
 DUPLICATE_BETTER = 4
 DUPLICATE_SMALLER_BETTER = 5
 DUPLICATE_LARGER_BETTER = 6
 DUPLICATE_WORSE = 7
-DUPLICATE_BETTER_OR_WORSE = 8
+DUPLICATE_MEMBER = 8
+DUPLICATE_KING = 9
+DUPLICATE_CONFIRMED_ALTERNATE = 10
 
 duplicate_type_string_lookup = {}
 
-duplicate_type_string_lookup[ DUPLICATE_UNKNOWN ] = 'unknown relationship'
-duplicate_type_string_lookup[ DUPLICATE_NOT_DUPLICATE ] = 'not duplicates'
+duplicate_type_string_lookup[ DUPLICATE_POTENTIAL ] = 'potential duplicates'
+duplicate_type_string_lookup[ DUPLICATE_FALSE_POSITIVE ] = 'not related/false positive'
 duplicate_type_string_lookup[ DUPLICATE_SAME_QUALITY ] = 'same quality'
 duplicate_type_string_lookup[ DUPLICATE_ALTERNATE ] = 'alternates'
 duplicate_type_string_lookup[ DUPLICATE_BETTER ] = 'this is better'
 duplicate_type_string_lookup[ DUPLICATE_SMALLER_BETTER ] = 'smaller hash_id is better'
 duplicate_type_string_lookup[ DUPLICATE_LARGER_BETTER ] = 'larger hash_id is better'
 duplicate_type_string_lookup[ DUPLICATE_WORSE ] = 'this is worse'
-duplicate_type_string_lookup[ DUPLICATE_BETTER_OR_WORSE ] = 'better or worse'
+duplicate_type_string_lookup[ DUPLICATE_MEMBER ] = 'duplicates'
+duplicate_type_string_lookup[ DUPLICATE_KING ] = 'the best quality duplicate'
+duplicate_type_string_lookup[ DUPLICATE_CONFIRMED_ALTERNATE ] = 'confirmed alternates'
 
 ENCODING_RAW = 0
 ENCODING_HEX = 1
@@ -227,6 +252,10 @@ hamming_string_lookup[ HAMMING_SPECULATIVE ] = 'speculative'
 HYDRUS_CLIENT = 0
 HYDRUS_SERVER = 1
 HYDRUS_TEST = 2
+
+MAINTENANCE_IDLE = 0
+MAINTENANCE_SHUTDOWN = 1
+MAINTENANCE_FORCED = 2
 
 GET_DATA = 0
 POST_DATA = 1
@@ -304,6 +333,7 @@ LOCAL_FILE_TRASH_DOMAIN = 14
 COMBINED_LOCAL_FILE = 15
 TEST_SERVICE = 16
 LOCAL_NOTES = 17
+CLIENT_API_SERVICE = 18
 SERVER_ADMIN = 99
 NULL_SERVICE = 100
 
@@ -322,7 +352,8 @@ service_string_lookup[ RATING_NUMERICAL_REPOSITORY ] = 'hydrus numerical rating 
 service_string_lookup[ RATING_LIKE_REPOSITORY ] = 'hydrus like/dislike rating repository'
 service_string_lookup[ COMBINED_TAG ] = 'virtual combined tag service'
 service_string_lookup[ COMBINED_FILE ] = 'virtual combined file service'
-service_string_lookup[ LOCAL_BOORU ] = 'hydrus local booru'
+service_string_lookup[ LOCAL_BOORU ] = 'client local booru'
+service_string_lookup[ CLIENT_API_SERVICE ] = 'client api'
 service_string_lookup[ IPFS ] = 'ipfs daemon'
 service_string_lookup[ TEST_SERVICE ] = 'test service'
 service_string_lookup[ LOCAL_NOTES ] = 'local file notes service'
@@ -332,7 +363,7 @@ service_string_lookup[ NULL_SERVICE ] = 'null service'
 LOCAL_FILE_SERVICES = ( LOCAL_FILE_DOMAIN, LOCAL_FILE_TRASH_DOMAIN, COMBINED_LOCAL_FILE )
 LOCAL_TAG_SERVICES = ( LOCAL_TAG, )
 
-LOCAL_SERVICES = LOCAL_FILE_SERVICES + LOCAL_TAG_SERVICES + ( LOCAL_RATING_LIKE, LOCAL_RATING_NUMERICAL, LOCAL_BOORU, LOCAL_NOTES )
+LOCAL_SERVICES = LOCAL_FILE_SERVICES + LOCAL_TAG_SERVICES + ( LOCAL_RATING_LIKE, LOCAL_RATING_NUMERICAL, LOCAL_BOORU, LOCAL_NOTES, CLIENT_API_SERVICE )
 
 RATINGS_SERVICES = ( LOCAL_RATING_LIKE, LOCAL_RATING_NUMERICAL, RATING_LIKE_REPOSITORY, RATING_NUMERICAL_REPOSITORY )
 REPOSITORIES = ( TAG_REPOSITORY, FILE_REPOSITORY, RATING_LIKE_REPOSITORY, RATING_NUMERICAL_REPOSITORY )
@@ -355,10 +386,6 @@ SUPERBAN = 1
 CHANGE_ACCOUNT_TYPE = 2
 ADD_TO_EXPIRES = 3
 SET_EXPIRES = 4
-
-HIGH_PRIORITY = 0
-LOW_PRIORITY = 2
-INTERRUPTABLE_PRIORITY = 4
 
 SCORE_PETITION = 0
 
@@ -442,15 +469,18 @@ APPLICATION_HYDRUS_UPDATE_CONTENT = 29
 TEXT_PLAIN = 30
 APPLICATION_RAR = 31
 APPLICATION_7Z = 32
+IMAGE_WEBP = 33
+IMAGE_TIFF = 34
+APPLICATION_PSD = 35
 APPLICATION_OCTET_STREAM = 100
 APPLICATION_UNKNOWN = 101
 
-ALLOWED_MIMES = ( IMAGE_JPEG, IMAGE_PNG, IMAGE_APNG, IMAGE_GIF, IMAGE_BMP, APPLICATION_FLASH, VIDEO_AVI, VIDEO_FLV, VIDEO_MOV, VIDEO_MP4, VIDEO_MKV, VIDEO_WEBM, VIDEO_MPEG, APPLICATION_PDF, APPLICATION_ZIP, APPLICATION_RAR, APPLICATION_7Z, AUDIO_MP3, AUDIO_OGG, AUDIO_FLAC, AUDIO_WMA, VIDEO_WMV, APPLICATION_HYDRUS_UPDATE_CONTENT, APPLICATION_HYDRUS_UPDATE_DEFINITIONS )
-SEARCHABLE_MIMES = ( IMAGE_JPEG, IMAGE_PNG, IMAGE_APNG, IMAGE_GIF, APPLICATION_FLASH, VIDEO_AVI, VIDEO_FLV, VIDEO_MOV, VIDEO_MP4, VIDEO_MKV, VIDEO_WEBM, VIDEO_MPEG, APPLICATION_PDF, APPLICATION_ZIP, APPLICATION_RAR, APPLICATION_7Z, AUDIO_MP3, AUDIO_OGG, AUDIO_FLAC, AUDIO_WMA, VIDEO_WMV )
+ALLOWED_MIMES = ( IMAGE_JPEG, IMAGE_PNG, IMAGE_APNG, IMAGE_GIF, IMAGE_BMP, IMAGE_WEBP, IMAGE_TIFF, IMAGE_ICON, APPLICATION_FLASH, VIDEO_AVI, VIDEO_FLV, VIDEO_MOV, VIDEO_MP4, VIDEO_MKV, VIDEO_WEBM, VIDEO_MPEG, APPLICATION_PSD, APPLICATION_PDF, APPLICATION_ZIP, APPLICATION_RAR, APPLICATION_7Z, AUDIO_MP3, AUDIO_OGG, AUDIO_FLAC, AUDIO_WMA, VIDEO_WMV, APPLICATION_HYDRUS_UPDATE_CONTENT, APPLICATION_HYDRUS_UPDATE_DEFINITIONS )
+SEARCHABLE_MIMES = ( IMAGE_JPEG, IMAGE_PNG, IMAGE_APNG, IMAGE_GIF, IMAGE_WEBP, IMAGE_TIFF, IMAGE_ICON, APPLICATION_FLASH, VIDEO_AVI, VIDEO_FLV, VIDEO_MOV, VIDEO_MP4, VIDEO_MKV, VIDEO_WEBM, VIDEO_MPEG, APPLICATION_PSD, APPLICATION_PDF, APPLICATION_ZIP, APPLICATION_RAR, APPLICATION_7Z, AUDIO_MP3, AUDIO_OGG, AUDIO_FLAC, AUDIO_WMA, VIDEO_WMV )
 
 DECOMPRESSION_BOMB_IMAGES = ( IMAGE_JPEG, IMAGE_PNG )
 
-IMAGES = ( IMAGE_JPEG, IMAGE_PNG, IMAGE_APNG, IMAGE_GIF, IMAGE_BMP )
+IMAGES = ( IMAGE_JPEG, IMAGE_PNG, IMAGE_APNG, IMAGE_GIF, IMAGE_BMP, IMAGE_WEBP, IMAGE_TIFF, IMAGE_ICON )
 
 AUDIO = ( AUDIO_MP3, AUDIO_OGG, AUDIO_FLAC, AUDIO_WMA )
 
@@ -458,19 +488,17 @@ VIDEO = ( VIDEO_AVI, VIDEO_FLV, VIDEO_MOV, VIDEO_MP4, VIDEO_WMV, VIDEO_MKV, VIDE
 
 NATIVE_VIDEO = ( IMAGE_APNG, VIDEO_AVI, VIDEO_FLV, VIDEO_MOV, VIDEO_MP4, VIDEO_WMV, VIDEO_MKV, VIDEO_WEBM, VIDEO_MPEG )
 
-APPLICATIONS = ( APPLICATION_FLASH, APPLICATION_PDF, APPLICATION_ZIP, APPLICATION_RAR, APPLICATION_7Z )
+APPLICATIONS = ( APPLICATION_FLASH, APPLICATION_PSD, APPLICATION_PDF, APPLICATION_ZIP, APPLICATION_RAR, APPLICATION_7Z )
 
 NOISY_MIMES = tuple( [ APPLICATION_FLASH ] + list( AUDIO ) + list( VIDEO ) )
 
 ARCHIVES = ( APPLICATION_ZIP, APPLICATION_HYDRUS_ENCRYPTED_ZIP, APPLICATION_RAR, APPLICATION_7Z )
 
-MIMES_WITH_THUMBNAILS = ( APPLICATION_FLASH, IMAGE_JPEG, IMAGE_PNG, IMAGE_APNG, IMAGE_GIF, IMAGE_BMP, VIDEO_AVI, VIDEO_FLV, VIDEO_MOV, VIDEO_MP4, VIDEO_WMV, VIDEO_MKV, VIDEO_WEBM, VIDEO_MPEG )
+MIMES_WITH_THUMBNAILS = ( APPLICATION_FLASH, IMAGE_JPEG, IMAGE_PNG, IMAGE_APNG, IMAGE_GIF, IMAGE_BMP, IMAGE_WEBP, IMAGE_TIFF, IMAGE_ICON, VIDEO_AVI, VIDEO_FLV, VIDEO_MOV, VIDEO_MP4, VIDEO_WMV, VIDEO_MKV, VIDEO_WEBM, VIDEO_MPEG )
 
 HYDRUS_UPDATE_FILES = ( APPLICATION_HYDRUS_UPDATE_DEFINITIONS, APPLICATION_HYDRUS_UPDATE_CONTENT )
 
-MIMES_WE_CAN_PHASH = ( IMAGE_JPEG, IMAGE_PNG )
-
-# mp3 header is complicated
+MIMES_WE_CAN_PHASH = ( IMAGE_JPEG, IMAGE_PNG, IMAGE_WEBP, IMAGE_TIFF, IMAGE_ICON )
 
 mime_enum_lookup = {}
 
@@ -483,9 +511,14 @@ mime_enum_lookup[ 'image/png' ] = IMAGE_PNG
 mime_enum_lookup[ 'image/apng' ] = IMAGE_APNG
 mime_enum_lookup[ 'image/gif' ] = IMAGE_GIF
 mime_enum_lookup[ 'image/bmp' ] = IMAGE_BMP
-mime_enum_lookup[ 'image' ] = IMAGES
+mime_enum_lookup[ 'image/webp' ] = IMAGE_WEBP
+mime_enum_lookup[ 'image/tiff' ] = IMAGE_TIFF
+mime_enum_lookup[ 'image/x-icon' ] = IMAGE_ICON
 mime_enum_lookup[ 'image/vnd.microsoft.icon' ] = IMAGE_ICON
+mime_enum_lookup[ 'image' ] = IMAGES
 mime_enum_lookup[ 'application/x-shockwave-flash' ] = APPLICATION_FLASH
+mime_enum_lookup[ 'application/x-photoshop' ] = APPLICATION_PSD
+mime_enum_lookup[ 'image/vnd.adobe.photoshop' ] = APPLICATION_PSD
 mime_enum_lookup[ 'application/octet-stream' ] = APPLICATION_OCTET_STREAM
 mime_enum_lookup[ 'application/x-yaml' ] = APPLICATION_YAML
 mime_enum_lookup[ 'PDF document' ] = APPLICATION_PDF
@@ -523,13 +556,16 @@ mime_string_lookup[ IMAGE_PNG ] = 'image/png'
 mime_string_lookup[ IMAGE_APNG ] = 'image/apng'
 mime_string_lookup[ IMAGE_GIF ] = 'image/gif'
 mime_string_lookup[ IMAGE_BMP ] = 'image/bmp'
+mime_string_lookup[ IMAGE_WEBP ] = 'image/webp'
+mime_string_lookup[ IMAGE_TIFF ] = 'image/tiff'
+mime_string_lookup[ IMAGE_ICON ] = 'image/x-icon'
 mime_string_lookup[ IMAGES ] = 'image'
-mime_string_lookup[ IMAGE_ICON ] = 'image/vnd.microsoft.icon'
 mime_string_lookup[ APPLICATION_FLASH ] = 'application/x-shockwave-flash'
 mime_string_lookup[ APPLICATION_OCTET_STREAM ] = 'application/octet-stream'
 mime_string_lookup[ APPLICATION_YAML ] = 'application/x-yaml'
 mime_string_lookup[ APPLICATION_JSON ] = 'application/json'
 mime_string_lookup[ APPLICATION_PDF ] = 'application/pdf'
+mime_string_lookup[ APPLICATION_PSD ] = 'application/x-photoshop'
 mime_string_lookup[ APPLICATION_ZIP ] = 'application/zip'
 mime_string_lookup[ APPLICATION_RAR ] = 'application/vnd.rar'
 mime_string_lookup[ APPLICATION_7Z ] = 'application/x-7z-compressed'
@@ -564,12 +600,15 @@ mime_ext_lookup[ IMAGE_PNG ] = '.png'
 mime_ext_lookup[ IMAGE_APNG ] = '.png'
 mime_ext_lookup[ IMAGE_GIF ] = '.gif'
 mime_ext_lookup[ IMAGE_BMP ] = '.bmp'
+mime_ext_lookup[ IMAGE_WEBP ] = '.webp'
+mime_ext_lookup[ IMAGE_TIFF ] = '.tiff'
 mime_ext_lookup[ IMAGE_ICON ] = '.ico'
 mime_ext_lookup[ APPLICATION_FLASH ] = '.swf'
 mime_ext_lookup[ APPLICATION_OCTET_STREAM ] = '.bin'
 mime_ext_lookup[ APPLICATION_YAML ] = '.yaml'
 mime_ext_lookup[ APPLICATION_JSON ] = '.json'
 mime_ext_lookup[ APPLICATION_PDF ] = '.pdf'
+mime_ext_lookup[ APPLICATION_PSD ] = '.psd'
 mime_ext_lookup[ APPLICATION_ZIP ] = '.zip'
 mime_ext_lookup[ APPLICATION_RAR ] = '.rar'
 mime_ext_lookup[ APPLICATION_7Z ] = '.7z'
@@ -621,11 +660,14 @@ PREDICATE_TYPE_SYSTEM_NUM_WORDS = 22
 PREDICATE_TYPE_SYSTEM_FILE_SERVICE = 23
 PREDICATE_TYPE_SYSTEM_NUM_PIXELS = 24
 PREDICATE_TYPE_SYSTEM_DIMENSIONS = 25
-PREDICATE_TYPE_SYSTEM_DUPLICATE_RELATIONSHIPS = 26
+PREDICATE_TYPE_SYSTEM_DUPLICATE_RELATIONSHIP_COUNT = 26
 PREDICATE_TYPE_SYSTEM_TAG_AS_NUMBER = 27
 PREDICATE_TYPE_SYSTEM_KNOWN_URLS = 28
+PREDICATE_TYPE_SYSTEM_FILE_VIEWING_STATS = 29
+PREDICATE_TYPE_OR_CONTAINER = 30
+PREDICATE_TYPE_LABEL = 31
 
-SYSTEM_PREDICATES = [ PREDICATE_TYPE_SYSTEM_EVERYTHING, PREDICATE_TYPE_SYSTEM_INBOX, PREDICATE_TYPE_SYSTEM_ARCHIVE, PREDICATE_TYPE_SYSTEM_UNTAGGED, PREDICATE_TYPE_SYSTEM_NUM_TAGS, PREDICATE_TYPE_SYSTEM_LIMIT, PREDICATE_TYPE_SYSTEM_SIZE, PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_HASH, PREDICATE_TYPE_SYSTEM_WIDTH, PREDICATE_TYPE_SYSTEM_HEIGHT, PREDICATE_TYPE_SYSTEM_RATIO, PREDICATE_TYPE_SYSTEM_DURATION, PREDICATE_TYPE_SYSTEM_MIME, PREDICATE_TYPE_SYSTEM_RATING, PREDICATE_TYPE_SYSTEM_SIMILAR_TO, PREDICATE_TYPE_SYSTEM_LOCAL, PREDICATE_TYPE_SYSTEM_NOT_LOCAL, PREDICATE_TYPE_SYSTEM_NUM_WORDS, PREDICATE_TYPE_SYSTEM_FILE_SERVICE, PREDICATE_TYPE_SYSTEM_NUM_PIXELS, PREDICATE_TYPE_SYSTEM_DIMENSIONS, PREDICATE_TYPE_SYSTEM_TAG_AS_NUMBER, PREDICATE_TYPE_SYSTEM_DUPLICATE_RELATIONSHIPS, PREDICATE_TYPE_SYSTEM_KNOWN_URLS ]
+SYSTEM_PREDICATES = [ PREDICATE_TYPE_SYSTEM_EVERYTHING, PREDICATE_TYPE_SYSTEM_INBOX, PREDICATE_TYPE_SYSTEM_ARCHIVE, PREDICATE_TYPE_SYSTEM_UNTAGGED, PREDICATE_TYPE_SYSTEM_NUM_TAGS, PREDICATE_TYPE_SYSTEM_LIMIT, PREDICATE_TYPE_SYSTEM_SIZE, PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_HASH, PREDICATE_TYPE_SYSTEM_WIDTH, PREDICATE_TYPE_SYSTEM_HEIGHT, PREDICATE_TYPE_SYSTEM_RATIO, PREDICATE_TYPE_SYSTEM_DURATION, PREDICATE_TYPE_SYSTEM_MIME, PREDICATE_TYPE_SYSTEM_RATING, PREDICATE_TYPE_SYSTEM_SIMILAR_TO, PREDICATE_TYPE_SYSTEM_LOCAL, PREDICATE_TYPE_SYSTEM_NOT_LOCAL, PREDICATE_TYPE_SYSTEM_NUM_WORDS, PREDICATE_TYPE_SYSTEM_FILE_SERVICE, PREDICATE_TYPE_SYSTEM_NUM_PIXELS, PREDICATE_TYPE_SYSTEM_DIMENSIONS, PREDICATE_TYPE_SYSTEM_TAG_AS_NUMBER, PREDICATE_TYPE_SYSTEM_DUPLICATE_RELATIONSHIP_COUNT, PREDICATE_TYPE_SYSTEM_KNOWN_URLS, PREDICATE_TYPE_SYSTEM_FILE_VIEWING_STATS ]
 
 SITE_TYPE_DEVIANT_ART = 0
 SITE_TYPE_GIPHY = 1
@@ -695,17 +737,15 @@ url_type_string_lookup[ URL_TYPE_SOURCE ] = 'associable/source url'
 
 # default options
 
-DEFAULT_LOCAL_FILE_PORT = 45865
-DEFAULT_LOCAL_BOORU_PORT = 45866
 DEFAULT_SERVER_ADMIN_PORT = 45870
 DEFAULT_SERVICE_PORT = 45871
 
-SERVER_ADMIN_KEY = 'server admin'
+SERVER_ADMIN_KEY = b'server admin'
 
 def construct_python_tuple( self, node ): return tuple( self.construct_sequence( node ) )
-def represent_python_tuple( self, data ): return self.represent_sequence( u'tag:yaml.org,2002:python/tuple', data )
+def represent_python_tuple( self, data ): return self.represent_sequence( 'tag:yaml.org,2002:python/tuple', data )
 
-yaml.SafeLoader.add_constructor( u'tag:yaml.org,2002:python/tuple', construct_python_tuple )
+yaml.SafeLoader.add_constructor( 'tag:yaml.org,2002:python/tuple', construct_python_tuple )
 yaml.SafeDumper.add_representer( tuple, represent_python_tuple )
 
 # for some reason, sqlite doesn't parse to int before this, despite the column affinity
@@ -719,6 +759,5 @@ sqlite3.register_adapter( list, yaml.safe_dump )
 sqlite3.register_adapter( tuple, yaml.safe_dump )
 sqlite3.register_adapter( bool, int )
 
-sqlite3.register_converter( 'BLOB_BYTES', str )
 sqlite3.register_converter( 'INTEGER_BOOLEAN', integer_boolean_to_bool )
 sqlite3.register_converter( 'TEXT_YAML', yaml.safe_load )

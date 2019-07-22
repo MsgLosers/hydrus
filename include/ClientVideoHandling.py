@@ -1,10 +1,10 @@
 import numpy.core.multiarray # important this comes before cv!
 import cv2
-import ClientImageHandling
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusImageHandling
+from . import ClientImageHandling
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusImageHandling
 
 if cv2.__version__.startswith( '2' ):
     
@@ -43,16 +43,6 @@ def GetCVVideoProperties( path ):
     height = int( capture.get( CAP_PROP_FRAME_HEIGHT ) )
     
     return ( ( width, height ), duration, num_frames )
-    
-def GetVideoFrameDuration( path ):
-
-    cv_video = cv2.VideoCapture( path )
-    
-    fps = cv_video.get( CAP_PROP_FPS )
-    
-    if fps in ( 0, 1000 ): raise HydrusExceptions.CantRenderWithCVException()
-    
-    return 1000.0 / fps
     
 # the cv code was initially written by @fluffy_cub
 class GIFRenderer( object ):
@@ -113,7 +103,7 @@ class GIFRenderer( object ):
                 self._pil_canvas = current_frame
                 
             
-            numpy_image = ClientImageHandling.GenerateNumPyImageFromPILImage( self._pil_canvas )
+            numpy_image = HydrusImageHandling.GenerateNumPyImageFromPILImage( self._pil_canvas )
             
         
         self._next_render_index = ( self._next_render_index + 1 ) % self._num_frames
@@ -195,7 +185,7 @@ class GIFRenderer( object ):
                 
                 numpy_image = self._GetCurrentFrame()
                 
-                numpy_image = ClientImageHandling.EfficientlyResizeNumpyImage( numpy_image, self._target_resolution )
+                numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, self._target_resolution )
                 
                 numpy_image = cv2.cvtColor( numpy_image, cv2.COLOR_BGR2RGB )
                 
@@ -222,7 +212,7 @@ class GIFRenderer( object ):
             
             numpy_image = self._GetCurrentFrame()
             
-            numpy_image = ClientImageHandling.EfficientlyResizeNumpyImage( numpy_image, self._target_resolution )
+            numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, self._target_resolution )
             
         
         self._last_frame = numpy_image
@@ -260,5 +250,10 @@ class GIFRenderer( object ):
         while self._next_render_index < index: self._GetCurrentFrame()
         
         #self._cv_video.set( CV_CAP_PROP_POS_FRAMES, index )
+        
+    
+    def Stop( self ):
+        
+        pass
         
     

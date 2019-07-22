@@ -1,14 +1,15 @@
-import ClientConstants as CC
-import ClientGUICommon
-import ClientGUIScrolledPanels
-import ClientParsing
-import ClientSerialisable
-import ClientThreading
-import HydrusConstants as HC
-import HydrusData
-import HydrusGlobals as HG
-import HydrusPaths
-import HydrusSerialisable
+from . import ClientConstants as CC
+from . import ClientGUICommon
+from . import ClientGUIFunctions
+from . import ClientGUIScrolledPanels
+from . import ClientParsing
+from . import ClientSerialisable
+from . import ClientThreading
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusGlobals as HG
+from . import HydrusPaths
+from . import HydrusSerialisable
 import os
 import wx
 
@@ -22,7 +23,7 @@ class PngExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         self._filepicker = wx.FilePickerCtrl( self, style = wx.FLP_SAVE | wx.FLP_USE_TEXTCTRL, wildcard = 'PNG (*.png)|*.png' )
         
-        flp_width = ClientGUICommon.ConvertTextToPixelWidth( self._filepicker, 64 )
+        flp_width = ClientGUIFunctions.ConvertTextToPixelWidth( self._filepicker, 64 )
         
         self._filepicker.SetMinSize( ( flp_width, -1 ) )
         
@@ -40,13 +41,13 @@ class PngExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         if payload_description is None:
             
-            ( payload_description, payload_string ) = ClientSerialisable.GetPayloadDescriptionAndString( self._payload_obj )
+            ( payload_description, payload_bytes ) = ClientSerialisable.GetPayloadDescriptionAndBytes( self._payload_obj )
             
         else:
             
-            payload_string = ClientSerialisable.GetPayloadString( self._payload_obj )
+            payload_bytes = ClientSerialisable.GetPayloadBytes( self._payload_obj )
             
-            payload_description += ' - ' + HydrusData.ConvertIntToBytes( len( payload_string ) )
+            payload_description += ' - ' + HydrusData.ToHumanBytes( len( payload_bytes ) )
             
         
         self._payload_description.SetValue( payload_description )
@@ -149,11 +150,11 @@ class PngExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         width = self._width.GetValue()
         
         payload_description = self._payload_description.GetValue()
-        payload_string = ClientSerialisable.GetPayloadString( self._payload_obj )
+        payload_bytes = ClientSerialisable.GetPayloadBytes( self._payload_obj )
         
         title = self._title.GetValue()
         text = self._text.GetValue()
-        path = HydrusData.ToUnicode( self._filepicker.GetPath() )
+        path = self._filepicker.GetPath()
         
         if path is not None and path != '':
             
@@ -167,7 +168,7 @@ class PngExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
             path += '.png'
             
         
-        ClientSerialisable.DumpToPng( width, payload_string, title, payload_description, text, path )
+        ClientSerialisable.DumpToPng( width, payload_bytes, title, payload_description, text, path )
         
         self._export.SetLabelText( 'done!' )
         
@@ -184,7 +185,7 @@ class PngsExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         self._directory_picker = wx.DirPickerCtrl( self )
         
-        dp_width = ClientGUICommon.ConvertTextToPixelWidth( self._directory_picker, 52 )
+        dp_width = ClientGUIFunctions.ConvertTextToPixelWidth( self._directory_picker, 52 )
         
         self._directory_picker.SetMinSize( ( dp_width, -1 ) )
         
@@ -254,7 +255,7 @@ class PngsExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         width = self._width.GetValue()
         
-        directory = HydrusData.ToUnicode( self._directory_picker.GetPath() )
+        directory = self._directory_picker.GetPath()
         
         last_png_export_dir = directory
         
@@ -265,7 +266,7 @@ class PngsExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         for obj in self._payload_objs:
             
-            ( payload_description, payload_string ) = ClientSerialisable.GetPayloadDescriptionAndString( obj )
+            ( payload_description, payload_bytes ) = ClientSerialisable.GetPayloadDescriptionAndBytes( obj )
             
             title = obj.GetName()
             text = ''
@@ -276,7 +277,7 @@ class PngsExportPanel( ClientGUIScrolledPanels.ReviewPanel ):
                 path += '.png'
                 
             
-            ClientSerialisable.DumpToPng( width, payload_string, title, payload_description, text, path )
+            ClientSerialisable.DumpToPng( width, payload_bytes, title, payload_description, text, path )
             
         
         self._export.SetLabelText( 'done!' )

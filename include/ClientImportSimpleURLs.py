@@ -1,19 +1,20 @@
-import ClientConstants as CC
-import ClientDownloading
-import ClientNetworkingJobs
-import ClientImporting
-import ClientImportFileSeeds
-import ClientImportGallerySeeds
-import ClientImportOptions
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
+from . import ClientConstants as CC
+from . import ClientDownloading
+from . import ClientNetworkingJobs
+from . import ClientImporting
+from . import ClientImportFileSeeds
+from . import ClientImportGallerySeeds
+from . import ClientImportOptions
+from . import ClientTags
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
 import os
 import threading
 import time
-import urlparse
+import urllib.parse
 
 class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
     
@@ -245,7 +246,7 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                     network_job.WaitUntilDone()
                     
                 
-                data = network_job.GetContent()
+                parsing_text = network_job.GetContentText()
                 
                 #
                 
@@ -257,11 +258,11 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                 
                 file_seeds = []
                 
-                for parsed_text in parsing_formula.Parse( parsing_context, data ):
+                for parsed_text in parsing_formula.Parse( parsing_context, parsing_text ):
                     
                     try:
                         
-                        file_url = urlparse.urljoin( url, parsed_text )
+                        file_url = urllib.parse.urljoin( url, parsed_text )
                         
                         file_seed = ClientImportFileSeeds.FileSeed( ClientImportFileSeeds.FILE_SEED_TYPE_URL, file_url )
                         
@@ -314,7 +315,7 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                 
                 error_occurred = True
                 
-                parser_status = HydrusData.ToUnicode( e )
+                parser_status = str( e )
                 
             finally:
                 
@@ -522,6 +523,9 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
         
         self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles, page_key )
         self._queue_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnQueue, page_key )
+        
+        self._files_repeating_job.SetThreadSlotType( 'misc' )
+        self._queue_repeating_job.SetThreadSlotType( 'misc' )
         
     
     def REPEATINGWorkOnFiles( self, page_key ):
@@ -934,11 +938,16 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def PendURLs( self, urls ):
+    def PendURLs( self, urls, service_keys_to_tags = None ):
+        
+        if service_keys_to_tags is None:
+            
+            service_keys_to_tags = ClientTags.ServiceKeysToTags()
+            
         
         with self._lock:
             
-            urls = filter( lambda u: len( u ) > 1, urls ) # > _1_ to take out the occasional whitespace
+            urls = [u for u in urls if len( u ) > 1] # > _1_ to take out the occasional whitespace
             
             file_seeds = []
             
@@ -946,11 +955,13 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
             
             for url in urls:
                 
-                url_match = HG.client_controller.network_engine.domain_manager.GetURLMatch( url )
+                url_class = HG.client_controller.network_engine.domain_manager.GetURLClass( url )
                 
-                if url_match is None or url_match.GetURLType() in ( HC.URL_TYPE_FILE, HC.URL_TYPE_POST ):
+                if url_class is None or url_class.GetURLType() in ( HC.URL_TYPE_FILE, HC.URL_TYPE_POST ):
                     
                     file_seed = ClientImportFileSeeds.FileSeed( ClientImportFileSeeds.FILE_SEED_TYPE_URL, url )
+                    
+                    file_seed.SetFixedServiceKeysToTags( service_keys_to_tags )
                     
                     file_seeds.append( file_seed )
                     
@@ -959,6 +970,8 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
                     can_generate_more_pages = False
                     
                     gallery_seed = ClientImportGallerySeeds.GallerySeed( url, can_generate_more_pages = can_generate_more_pages )
+                    
+                    gallery_seed.SetFixedServiceKeysToTags( service_keys_to_tags )
                     
                     gallery_seeds.append( gallery_seed )
                     
@@ -1000,6 +1013,9 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
         
         self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles, page_key )
         self._gallery_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnGallery, page_key )
+        
+        self._files_repeating_job.SetThreadSlotType( 'misc' )
+        self._gallery_repeating_job.SetThreadSlotType( 'misc' )
         
     
     def REPEATINGWorkOnFiles( self, page_key ):

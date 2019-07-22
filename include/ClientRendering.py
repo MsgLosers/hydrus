@@ -1,13 +1,13 @@
-import ClientFiles
-import ClientImageHandling
-import ClientVideoHandling
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusImageHandling
-import HydrusGlobals as HG
-import HydrusThreading
-import HydrusVideoHandling
+from . import ClientFiles
+from . import ClientImageHandling
+from . import ClientVideoHandling
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusImageHandling
+from . import HydrusGlobals as HG
+from . import HydrusThreading
+from . import HydrusVideoHandling
 import os
 import threading
 import time
@@ -26,9 +26,31 @@ except Exception as e: # ImportError wasn't enough here as Linux went up the sho
     
     pass
     
+def FrameIndexOutOfRange( index, range_start, range_end ):
+    
+    before_start = index < range_start
+    after_end = range_end < index
+    
+    if range_start < range_end:
+        
+        if before_start or after_end:
+            
+            return True
+            
+        
+    else:
+        
+        if after_end and before_start:
+            
+            return True
+            
+        
+    
+    return False
+    
 def GenerateHydrusBitmap( path, mime, compressed = True ):
     
-    numpy_image = ClientImageHandling.GenerateNumpyImage( path, mime )
+    numpy_image = ClientImageHandling.GenerateNumPyImage( path, mime )
     
     return GenerateHydrusBitmapFromNumPyImage( numpy_image, compressed = compressed )
     
@@ -72,9 +94,7 @@ class ImageRenderer( object ):
     
     def _Initialise( self ):
         
-        time.sleep( 0.00001 )
-        
-        self._numpy_image = ClientImageHandling.GenerateNumpyImage( self._path, self._mime )
+        self._numpy_image = ClientImageHandling.GenerateNumPyImage( self._path, self._mime )
         
     
     def GetEstimatedMemoryFootprint( self ):
@@ -109,7 +129,7 @@ class ImageRenderer( object ):
             
         else:
             
-            wx_numpy_image = ClientImageHandling.ResizeNumpyImage( self._media.GetMime(), self._numpy_image, target_resolution )
+            wx_numpy_image = ClientImageHandling.ResizeNumPyImageForMediaViewer( self._media.GetMime(), self._numpy_image, target_resolution )
             
         
         ( wx_height, wx_width, wx_depth ) = wx_numpy_image.shape
@@ -118,11 +138,11 @@ class ImageRenderer( object ):
         
         if wx_depth == 3:
             
-            return wx.Bitmap.FromBuffer( wx_width, wx_height, wx_data )
+            return HG.client_controller.bitmap_manager.GetBitmapFromBuffer( wx_width, wx_height, 24, wx_data )
             
         else:
             
-            return wx.Bitmap.FromBufferRGBA( wx_width, wx_height, wx_data )
+            return HG.client_controller.bitmap_manager.GetBitmapFromBuffer( wx_width, wx_height, 32, wx_data )
             
         
     
@@ -165,12 +185,15 @@ class RasterContainer( object ):
         
         self._path = client_files_manager.GetFilePath( hash, mime )
         
-        width_zoom = target_width / float( media_width )
-        height_zoom = target_height / float( media_height )
+        width_zoom = target_width / media_width
+        height_zoom = target_height / media_height
         
         self._zoom = min( ( width_zoom, height_zoom ) )
         
-        if self._zoom > 1.0: self._zoom = 1.0
+        if self._zoom > 1.0:
+            
+            self._zoom = 1.0
+            
         
     
 class RasterContainerVideo( RasterContainer ):
@@ -182,6 +205,8 @@ class RasterContainerVideo( RasterContainer ):
         self._init_position = init_position
         
         self._initialised = False
+        
+        self._renderer = None
         
         self._frames = {}
         
@@ -203,7 +228,7 @@ class RasterContainerVideo( RasterContainer ):
         
         if duration is None or duration == 0:
             
-            message = 'The file with hash ' + media.GetHash().encode( 'hex' ) + ', had an invalid duration.'
+            message = 'The file with hash ' + media.GetHash().hex() + ', had an invalid duration.'
             message += os.linesep * 2
             message += 'You may wish to try regenerating its metadata through the advanced mode right-click menu.'
             
@@ -214,7 +239,7 @@ class RasterContainerVideo( RasterContainer ):
         
         if num_frames_in_video is None or num_frames_in_video == 0:
             
-            message = 'The file with hash ' + media.GetHash().encode( 'hex' ) + ', had an invalid number of frames.'
+            message = 'The file with hash ' + media.GetHash().hex() + ', had an invalid number of frames.'
             message += os.linesep * 2
             message += 'You may wish to try regenerating its metadata through the advanced mode right-click menu.'
             
@@ -223,9 +248,9 @@ class RasterContainerVideo( RasterContainer ):
             num_frames_in_video = 1
             
         
-        self._average_frame_duration = float( duration ) / num_frames_in_video
+        self._average_frame_duration = duration / num_frames_in_video
         
-        frame_buffer_length = ( video_buffer_size_mb * 1024 * 1024 ) / ( x * y * 3 )
+        frame_buffer_length = ( video_buffer_size_mb * 1024 * 1024 ) // ( x * y * 3 )
         
         # if we can't buffer the whole vid, then don't have a clunky massive buffer
         
@@ -236,8 +261,8 @@ class RasterContainerVideo( RasterContainer ):
             frame_buffer_length = max_streaming_buffer_size
             
         
-        self._num_frames_backwards = frame_buffer_length * 2 / 3
-        self._num_frames_forwards = frame_buffer_length / 3
+        self._num_frames_backwards = frame_buffer_length * 2 // 3
+        self._num_frames_forwards = frame_buffer_length // 3
         
         self._lock = threading.Lock()
         
@@ -256,35 +281,12 @@ class RasterContainerVideo( RasterContainer ):
     
     def _IndexInRange( self, index, range_start, range_end ):
         
-        return not self._IndexOutOfRange( index, range_start, range_end )
-        
-    
-    def _IndexOutOfRange( self, index, range_start, range_end ):
-        
-        before_start = index < range_start
-        after_end = range_end < index
-        
-        if range_start < range_end:
-            
-            if before_start or after_end:
-                
-                return True
-                
-            
-        else:
-            
-            if after_end and before_start:
-                
-                return True
-                
-            
-        
-        return False
+        return not FrameIndexOutOfRange( index, range_start, range_end )
         
     
     def _MaintainBuffer( self ):
         
-        deletees = [ index for index in self._frames.keys() if self._IndexOutOfRange( index, self._buffer_start_index, self._buffer_end_index ) ]
+        deletees = [ index for index in list(self._frames.keys()) if FrameIndexOutOfRange( index, self._buffer_start_index, self._buffer_end_index ) ]
         
         for i in deletees:
             
@@ -301,6 +303,8 @@ class RasterContainerVideo( RasterContainer ):
         
         client_files_manager = HG.client_controller.client_files_manager
         
+        time.sleep( 0.00001 )
+        
         if self._media.GetMime() == HC.IMAGE_GIF:
             
             self._durations = HydrusImageHandling.GetGIFFrameDurations( self._path )
@@ -311,6 +315,9 @@ class RasterContainerVideo( RasterContainer ):
             
             self._renderer = HydrusVideoHandling.VideoRendererFFMPEG( self._path, mime, duration, num_frames_in_video, self._target_resolution )
             
+        
+        # give ui a chance to draw a blank frame rather than hard-charge right into CPUland
+        time.sleep( 0.00001 )
         
         self.GetReadyForFrame( self._init_position )
         
@@ -323,6 +330,15 @@ class RasterContainerVideo( RasterContainer ):
             
             if self._stop or HG.view_shutdown:
                 
+                self._renderer.Stop()
+                
+                self._renderer = None
+                
+                with self._lock:
+                    
+                    self._frames = {}
+                    
+                
                 return
                 
             
@@ -332,7 +348,7 @@ class RasterContainerVideo( RasterContainer ):
                 
                 # lets see if we should move the renderer to a new position
                 
-                next_render_is_out_of_buffer = self._IndexOutOfRange( self._next_render_index, self._buffer_start_index, self._buffer_end_index )
+                next_render_is_out_of_buffer = FrameIndexOutOfRange( self._next_render_index, self._buffer_start_index, self._buffer_end_index )
                 buffer_not_fully_rendered = self._last_index_rendered != self._buffer_end_index
                 
                 currently_rendering_out_of_buffer = next_render_is_out_of_buffer and buffer_not_fully_rendered
@@ -413,12 +429,12 @@ class RasterContainerVideo( RasterContainer ):
                 
                 with self._lock:
                     
-                    we_have_the_ideal_next_frame = self._HasFrame( self._ideal_next_frame )
+                    work_still_to_do = self._last_index_rendered != self._buffer_end_index
                     
                 
-                if not we_have_the_ideal_next_frame: # there is work to do!
+                if work_still_to_do:
                     
-                    time.sleep( 0.00001 )
+                    time.sleep( 0.0001 )
                     
                 else:
                     
@@ -504,7 +520,7 @@ class RasterContainerVideo( RasterContainer ):
         
         num_frames_in_video = self.GetNumFrames()
         
-        frame_request_is_impossible = self._IndexOutOfRange( next_index_to_expect, 0, num_frames_in_video - 1 )
+        frame_request_is_impossible = FrameIndexOutOfRange( next_index_to_expect, 0, num_frames_in_video - 1 )
         
         if frame_request_is_impossible:
             
@@ -519,7 +535,7 @@ class RasterContainerVideo( RasterContainer ):
             
             if video_is_bigger_than_buffer:
                 
-                current_ideal_is_out_of_buffer = self._buffer_start_index == -1 or self._IndexOutOfRange( self._ideal_next_frame, self._buffer_start_index, self._buffer_end_index )
+                current_ideal_is_out_of_buffer = self._buffer_start_index == -1 or FrameIndexOutOfRange( self._ideal_next_frame, self._buffer_start_index, self._buffer_end_index )
                 
                 ideal_buffer_start_index = max( 0, self._ideal_next_frame - self._num_frames_backwards )
                 
@@ -576,6 +592,18 @@ class RasterContainerVideo( RasterContainer ):
         return self._target_resolution
         
     
+    def GetTimestampMS( self, frame_index ):
+        
+        if self._media.GetMime() == HC.IMAGE_GIF:
+            
+            return sum( self._durations[ : frame_index ] )
+            
+        else:
+            
+            return self._average_frame_duration * frame_index
+            
+        
+    
     def GetTotalDuration( self ):
         
         if self._media.GetMime() == HC.IMAGE_GIF:
@@ -593,6 +621,14 @@ class RasterContainerVideo( RasterContainer ):
         with self._lock:
             
             return self._HasFrame( index )
+            
+        
+    
+    def CanHaveVariableFramerate( self ):
+        
+        with self._lock:
+            
+            return self._media.GetMime() == HC.IMAGE_GIF
             
         
     
@@ -678,14 +714,7 @@ class HydrusBitmap( object ):
         
         ( width, height ) = self._size
         
-        if self._depth == 3:
-            
-            return wx.Bitmap.FromBuffer( width, height, self._GetData() )
-            
-        elif self._depth == 4:
-            
-            return wx.Bitmap.FromBufferRGBA( width, height, self._GetData() )
-            
+        return HG.client_controller.bitmap_manager.GetBitmapFromBuffer( width, height, self._depth * 8, self._GetData() )
         
     
     def GetWxImage( self ):
@@ -698,11 +727,11 @@ class HydrusBitmap( object ):
             
         elif self._depth == 4:
             
-            bitmap = wx.Bitmap.FromBufferRGBA( width, height, self._GetData() )
+            bitmap = HG.client_controller.bitmap_manager.GetBitmapFromBuffer( width, height, 32, self._GetData() )
             
             image = bitmap.ConvertToImage()
             
-            bitmap.Destroy()
+            HG.client_controller.bitmap_manager.ReleaseBitmap( bitmap )
             
             return image
             

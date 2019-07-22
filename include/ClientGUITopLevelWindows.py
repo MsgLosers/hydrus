@@ -1,11 +1,12 @@
-import ClientCaches
-import ClientConstants as CC
-import ClientGUIMenus
-import ClientGUIShortcuts
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
+from . import ClientCaches
+from . import ClientConstants as CC
+from . import ClientGUIFunctions
+from . import ClientGUIMenus
+from . import ClientGUIShortcuts
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
 import os
 import wx
 
@@ -296,22 +297,17 @@ class NewDialog( wx.Dialog ):
         
         wx.Dialog.__init__( self, parent, title = title, style = style )
         
+        self._consumed_esc_to_cancel = False
+        
         self._new_options = HG.client_controller.new_options
         
         self.SetBackgroundColour( wx.SystemSettings.GetColour( wx.SYS_COLOUR_FRAMEBK ) )
         
         self.SetIcon( HG.client_controller.frame_icon )
         
-        self.Bind( wx.EVT_BUTTON, self.EventDialogButton )
-        
-        self.Bind( wx.EVT_MENU_CLOSE, self.EventMenuClose )
-        self.Bind( wx.EVT_MENU_HIGHLIGHT_ALL, self.EventMenuHighlight )
-        self.Bind( wx.EVT_MENU_OPEN, self.EventMenuOpen )
-        
-        self._menu_stack = []
-        self._menu_text_stack = []
-        
         HG.client_controller.ResetIdleTimer()
+        
+        self.Bind( wx.EVT_CHAR_HOOK, self.EventCharHook )
         
     
     def _CanCancel( self ):
@@ -324,78 +320,29 @@ class NewDialog( wx.Dialog ):
         return True
         
     
-    def EventMenuClose( self, event ):
+    def _ReadyToClose( self, value ):
         
-        menu = event.GetMenu()
-        
-        if menu is not None and menu in self._menu_stack:
-            
-            index = self._menu_stack.index( menu )
-            
-            del self._menu_stack[ index ]
-            
-            previous_text = self._menu_text_stack.pop()
-            
-            status_bar = HG.client_controller.GetGUI().GetStatusBar()
-            
-            status_bar.SetStatusText( previous_text )
-            
+        return True
         
     
-    def EventMenuHighlight( self, event ):
+    def _SaveOKPosition( self ):
         
-        if len( self._menu_stack ) > 0:
-            
-            text = ''
-            
-            menu = self._menu_stack[-1]
-            
-            while ClientGUIMenus.MenuIsDead( menu ):
-                
-                if len( self._menu_stack ) == 0:
-                    
-                    return
-                    
-                
-                del self._menu_stack[-1]
-                
-                menu = self._menu_stack[-1]
-                
-            
-            menu_item = menu.FindItemById( event.GetMenuId() )
-            
-            if menu_item is not None:
-                
-                text = menu_item.GetHelp()
-                
-            
-            status_bar = HG.client_controller.GetGUI().GetStatusBar()
-            
-            status_bar.SetStatusText( text )
-            
+        pass
         
     
-    def EventMenuOpen( self, event ):
+    def _TryEndModal( self, value ):
         
-        menu = event.GetMenu()
-        
-        if menu is not None:
+        if not self.IsModal(): # in some rare cases (including spammy AutoHotkey, looks like), this can be fired before the dialog can clean itself up
             
-            status_bar = HG.client_controller.GetGUI().GetStatusBar()
-            
-            previous_text = status_bar.GetStatusText()
-            
-            self._menu_stack.append( menu )
-            
-            self._menu_text_stack.append( previous_text )
+            return
             
         
-    
-    def EventDialogButton( self, event ):
+        if not self._ReadyToClose( value ):
+            
+            return
+            
         
-        event_id = event.GetId()
-        
-        if event_id == wx.ID_CANCEL:
+        if value == wx.ID_CANCEL:
             
             if not self._CanCancel():
                 
@@ -403,66 +350,17 @@ class NewDialog( wx.Dialog ):
                 
             
         
-        if event_id == wx.ID_OK:
+        if value == wx.ID_OK:
             
             if not self._CanOK():
                 
                 return
                 
             
-        
-        if not self.IsModal(): # in some rare cases (including spammy AutoHotkey, looks like), this can be fired before the dialog can clean itself up
-            
-            return
+            self._SaveOKPosition()
             
         
-        self.EndModal( event_id )
-        
-    
-class DialogThatResizes( NewDialog ):
-    
-    def __init__( self, parent, title, frame_key, style_override = None ):
-        
-        self._frame_key = frame_key
-        
-        NewDialog.__init__( self, parent, title, style_override = style_override )
-        
-    
-class DialogThatTakesScrollablePanel( DialogThatResizes ):
-    
-    def __init__( self, parent, title, frame_key = 'regular_dialog', style_override = None ):
-        
-        self._panel = None
-        
-        DialogThatResizes.__init__( self, parent, title, frame_key, style_override = style_override )
-        
-        self._InitialiseButtons()
-        
-        self.Bind( EVT_OK, self.EventOK )
-        self.Bind( CC.EVT_SIZE_CHANGED, self.EventChildSizeChanged )
-        
-    
-    def _CanCancel( self ):
-        
-        return self._panel.CanCancel()
-        
-    
-    def _CanOK( self ):
-        
-        return self._panel.CanOK()
-        
-    
-    def _GetButtonBox( self ):
-        
-        raise NotImplementedError()
-        
-    
-    def _InitialiseButtons( self ):
-        
-        raise NotImplementedError()
-        
-    
-    def _TryEndModal( self, value ):
+        self.CleanBeforeDestroy()
         
         try:
             
@@ -498,9 +396,151 @@ class DialogThatTakesScrollablePanel( DialogThatResizes ):
             
         
     
+    def CleanBeforeDestroy( self ):
+        
+        parent = self.GetParent()
+        
+        if parent is not None and not ClientGUIFunctions.GetTLP( parent ) == HG.client_controller.gui:
+            
+            wx.CallAfter( parent.SetFocus )
+            
+        
+    
     def DoOK( self ):
         
+        self._TryEndModal( wx.ID_OK )
+        
+    
+    def EventCharHook( self, event ):
+        
+        ( modifier, key ) = ClientGUIShortcuts.ConvertKeyEventToSimpleTuple( event )
+        
+        obj = event.GetEventObject()
+        
+        event_from_us = obj is not None and ClientGUIFunctions.IsWXAncestor( obj, self )
+        
+        if event_from_us and key == wx.WXK_ESCAPE and not self._consumed_esc_to_cancel:
+            
+            self._consumed_esc_to_cancel = True
+            
+            self._TryEndModal( wx.ID_CANCEL )
+            
+        else:
+            
+            event.Skip()
+            
+        
+    
+    def EventClose( self, event ):
+        
+        if not self:
+            
+            return
+            
+        
+        self._TryEndModal( wx.ID_CANCEL )
+        
+    
+    def EventDialogButton( self, event ):
+        
+        if not self:
+            
+            return
+            
+        
+        event_id = event.GetId()
+        
+        if event_id == wx.ID_ANY:
+            
+            event.Skip()
+            
+            return
+            
+        
+        event_object = event.GetEventObject()
+        
+        if event_object is not None:
+            
+            tlp = event_object.GetTopLevelParent()
+            
+            if tlp != self:
+                
+                event.Skip()
+                
+                return
+                
+            
+        
+        self._TryEndModal( event_id )
+        
+    
+    def EventOK( self, event ):
+        
+        if not self:
+            
+            return
+            
+        
+        self._TryEndModal( wx.ID_OK )
+        
+    
+class DialogThatResizes( NewDialog ):
+    
+    def __init__( self, parent, title, frame_key, style_override = None ):
+        
+        self._frame_key = frame_key
+        
+        NewDialog.__init__( self, parent, title, style_override = style_override )
+        
+    
+    def _SaveOKPosition( self ):
+        
+        SaveTLWSizeAndPosition( self, self._frame_key )
+        
+    
+class DialogThatTakesScrollablePanel( DialogThatResizes ):
+    
+    def __init__( self, parent, title, frame_key = 'regular_dialog', style_override = None, hide_buttons = False ):
+        
+        self._panel = None
+        self._hide_buttons = hide_buttons
+        
+        DialogThatResizes.__init__( self, parent, title, frame_key, style_override = style_override )
+        
+        self._InitialiseButtons()
+        
+        self.Bind( EVT_OK, self.EventOK )
+        self.Bind( CC.EVT_SIZE_CHANGED, self.EventChildSizeChanged )
+        
+    
+    def _CanCancel( self ):
+        
+        return self._panel.CanCancel()
+        
+    
+    def _CanOK( self ):
+        
+        return self._panel.CanOK()
+        
+    
+    def _GetButtonBox( self ):
+        
         raise NotImplementedError()
+        
+    
+    def _InitialiseButtons( self ):
+        
+        raise NotImplementedError()
+        
+    
+    def CleanBeforeDestroy( self ):
+        
+        DialogThatResizes.CleanBeforeDestroy( self )
+        
+        if hasattr( self._panel, 'CleanBeforeDestroy' ):
+            
+            self._panel.CleanBeforeDestroy()
+            
         
     
     def EventChildSizeChanged( self, event ):
@@ -523,16 +563,6 @@ class DialogThatTakesScrollablePanel( DialogThatResizes ):
             
         
     
-    def EventOK( self, event ):
-        
-        if not self:
-            
-            return
-            
-        
-        self.DoOK()
-        
-    
     def SetPanel( self, panel ):
         
         self._panel = panel
@@ -542,7 +572,11 @@ class DialogThatTakesScrollablePanel( DialogThatResizes ):
         vbox = wx.BoxSizer( wx.VERTICAL )
         
         vbox.Add( self._panel, CC.FLAGS_EXPAND_BOTH_WAYS )
-        vbox.Add( buttonbox, CC.FLAGS_BUTTON_SIZER )
+        
+        if buttonbox is not None:
+            
+            vbox.Add( buttonbox, CC.FLAGS_BUTTON_SIZER )
+            
         
         self.SetSizer( vbox )
         
@@ -553,7 +587,7 @@ class DialogThatTakesScrollablePanel( DialogThatResizes ):
         PostSizeChangedEvent( self ) # helps deal with some Linux/otherscrollbar weirdness where setupscrolling changes inherent virtual size
         
     
-class DialogThatTakesScrollablePanelClose( DialogThatTakesScrollablePanel ):
+class DialogNullipotent( DialogThatTakesScrollablePanel ):
     
     def _GetButtonBox( self ):
         
@@ -569,41 +603,7 @@ class DialogThatTakesScrollablePanelClose( DialogThatTakesScrollablePanel ):
         self._close = wx.Button( self, id = wx.ID_OK, label = 'close' )
         self._close.Bind( wx.EVT_BUTTON, self.EventOK )
         
-        self._cancel = wx.Button( self, id = wx.ID_CANCEL )
-        self._cancel.Hide()
-        
-    
-class DialogNullipotent( DialogThatTakesScrollablePanelClose ):
-    
-    def __init__( self, parent, title ):
-        
-        DialogThatTakesScrollablePanelClose.__init__( self, parent, title )
-        
-    
-    def DoOK( self ):
-        
-        if not self.IsModal():
-            
-            return
-            
-        
-        if not self._CanOK():
-            
-            return
-            
-        
-        SaveTLWSizeAndPosition( self, self._frame_key )
-        
-        self._TryEndModal( wx.ID_OK )
-        
-    
-class DialogNullipotentVetoable( DialogThatTakesScrollablePanelClose ):
-    
-    def __init__( self, parent, title, style_override = None, hide_close_button = False ):
-        
-        DialogThatTakesScrollablePanelClose.__init__( self, parent, title, style_override = style_override )
-        
-        if hide_close_button:
+        if self._hide_buttons:
             
             self._close.Hide()
             
@@ -611,40 +611,28 @@ class DialogNullipotentVetoable( DialogThatTakesScrollablePanelClose ):
             
         
     
-    def DoOK( self ):
-        
-        if not self.IsModal():
-            
-            return
-            
-        
-        if not self._CanOK():
-            
-            return
-            
+    def _ReadyToClose( self, value ):
         
         try:
             
             self._panel.TryToClose()
             
+            return True
+            
         except HydrusExceptions.VetoException as e:
             
-            message = HydrusData.ToUnicode( e )
+            message = str( e )
             
             if len( message ) > 0:
                 
                 wx.MessageBox( message )
                 
             
-            return
+            return False
             
         
-        SaveTLWSizeAndPosition( self, self._frame_key )
-        
-        self._TryEndModal( wx.ID_OK )
-        
     
-class DialogThatTakesScrollablePanelApplyCancel( DialogThatTakesScrollablePanel ):
+class DialogApplyCancel( DialogThatTakesScrollablePanel ):
     
     def _GetButtonBox( self ):
         
@@ -659,86 +647,98 @@ class DialogThatTakesScrollablePanelApplyCancel( DialogThatTakesScrollablePanel 
     def _InitialiseButtons( self ):
         
         self._apply = wx.Button( self, id = wx.ID_OK, label = 'apply' )
-        self._apply.Bind( wx.EVT_BUTTON, self.EventOK )
         self._apply.SetForegroundColour( ( 0, 128, 0 ) )
+        self._apply.Bind( wx.EVT_BUTTON, self.EventDialogButton )
         
         self._cancel = wx.Button( self, id = wx.ID_CANCEL, label = 'cancel' )
         self._cancel.SetForegroundColour( ( 128, 0, 0 ) )
+        self._cancel.Bind( wx.EVT_BUTTON, self.EventDialogButton )
         
-    
-class DialogEdit( DialogThatTakesScrollablePanelApplyCancel ):
-    
-    def __init__( self, parent, title, frame_key = 'regular_dialog' ):
-        
-        DialogThatTakesScrollablePanelApplyCancel.__init__( self, parent, title, frame_key = frame_key )
-        
-    
-    def DoOK( self ):
-        
-        if not self.IsModal():
+        if self._hide_buttons:
             
-            return
+            self._apply.Hide()
+            self._cancel.Hide()
+            
+            self.Bind( wx.EVT_CLOSE, self.EventClose ) # the close event no longer goes to the default button, since it is hidden, wew
             
         
-        if not self._CanOK():
+    
+class DialogEdit( DialogApplyCancel ):
+    
+    def __init__( self, parent, title, frame_key = 'regular_dialog', hide_buttons = False ):
+        
+        DialogApplyCancel.__init__( self, parent, title, frame_key = frame_key, hide_buttons = hide_buttons )
+        
+    
+    def _ReadyToClose( self, value ):
+        
+        if value != wx.ID_OK:
             
-            return
+            return True
             
         
         try:
             
             value = self._panel.GetValue()
             
+            return True
+            
         except HydrusExceptions.VetoException as e:
             
-            message = HydrusData.ToUnicode( e )
+            message = str( e )
             
             if len( message ) > 0:
                 
                 wx.MessageBox( message )
                 
             
-            return
+            return False
             
-        
-        SaveTLWSizeAndPosition( self, self._frame_key )
-        
-        self._TryEndModal( wx.ID_OK )
         
     
-class DialogManage( DialogThatTakesScrollablePanelApplyCancel ):
+class DialogManage( DialogApplyCancel ):
     
-    def DoOK( self ):
+    def _ReadyToClose( self, value ):
         
-        if not self.IsModal():
+        if value != wx.ID_OK:
             
-            return
-            
-        
-        if not self._CanOK():
-            
-            return
+            return True
             
         
         try:
             
             self._panel.CommitChanges()
             
+            return True
+            
         except HydrusExceptions.VetoException as e:
             
-            message = HydrusData.ToUnicode( e )
+            message = str( e )
             
             if len( message ) > 0:
                 
                 wx.MessageBox( message )
                 
             
-            return
+            return False
             
         
-        SaveTLWSizeAndPosition( self, self._frame_key )
+    
+class DialogCustomButtonQuestion( DialogThatTakesScrollablePanel ):
+    
+    def __init__( self, parent, title, frame_key = 'regular_center_dialog', style_override = None ):
         
-        self._TryEndModal( wx.ID_OK )
+        DialogThatTakesScrollablePanel.__init__( self, parent, title, frame_key = frame_key, style_override = style_override )
+        
+    
+    def _GetButtonBox( self ):
+        
+        return None
+        
+    
+    def _InitialiseButtons( self ):
+        
+        pass
         
     
 class Frame( wx.Frame ):
@@ -760,81 +760,26 @@ class Frame( wx.Frame ):
         
         self.SetIcon( HG.client_controller.frame_icon )
         
-        self.Bind( wx.EVT_MENU_CLOSE, self.EventMenuClose )
-        self.Bind( wx.EVT_MENU_HIGHLIGHT_ALL, self.EventMenuHighlight )
-        self.Bind( wx.EVT_MENU_OPEN, self.EventMenuOpen )
-        
-        self._menu_stack = []
-        self._menu_text_stack = []
+        self.Bind( wx.EVT_CLOSE, self.EventAboutToClose )
         
         HG.client_controller.ResetIdleTimer()
         
     
-    def EventMenuClose( self, event ):
+    def CleanBeforeDestroy( self ):
         
-        menu = event.GetMenu()
+        parent = self.GetParent()
         
-        if menu is not None and menu in self._menu_stack:
+        if parent is not None and not ClientGUIFunctions.GetTLP( parent ) == HG.client_controller.gui:
             
-            index = self._menu_stack.index( menu )
-            
-            del self._menu_stack[ index ]
-            
-            previous_text = self._menu_text_stack.pop()
-            
-            status_bar = HG.client_controller.GetGUI().GetStatusBar()
-            
-            status_bar.SetStatusText( previous_text )
+            wx.CallAfter( parent.SetFocus )
             
         
     
-    def EventMenuHighlight( self, event ):
+    def EventAboutToClose( self, event ):
         
-        if len( self._menu_stack ) > 0:
-            
-            text = ''
-            
-            menu = self._menu_stack[-1]
-            
-            while ClientGUIMenus.MenuIsDead( menu ):
-                
-                del self._menu_stack[-1]
-                
-                if len( self._menu_stack ) == 0:
-                    
-                    return
-                    
-                
-                menu = self._menu_stack[-1]
-                
-            
-            menu_item = menu.FindItemById( event.GetMenuId() )
-            
-            if menu_item is not None:
-                
-                text = menu_item.GetHelp()
-                
-            
-            status_bar = HG.client_controller.GetGUI().GetStatusBar()
-            
-            status_bar.SetStatusText( text )
-            
+        self.CleanBeforeDestroy()
         
-    
-    def EventMenuOpen( self, event ):
-        
-        menu = event.GetMenu()
-        
-        if menu is not None:
-            
-            status_bar = HG.client_controller.GetGUI().GetStatusBar()
-            
-            previous_text = status_bar.GetStatusText()
-            
-            self._menu_stack.append( menu )
-            
-            self._menu_text_stack.append( previous_text )
-            
+        event.Skip()
         
     
 class FrameThatResizes( Frame ):
@@ -875,6 +820,16 @@ class FrameThatTakesScrollablePanel( FrameThatResizes ):
         self.Bind( wx.EVT_CHAR_HOOK, self.EventCharHook )
         
     
+    def CleanBeforeDestroy( self ):
+        
+        FrameThatResizes.CleanBeforeDestroy( self )
+        
+        if hasattr( self._panel, 'CleanBeforeDestroy' ):
+            
+            self._panel.CleanBeforeDestroy()
+            
+        
+    
     def EventCharHook( self, event ):
         
         ( modifier, key ) = ClientGUIShortcuts.ConvertKeyEventToSimpleTuple( event )
@@ -912,6 +867,11 @@ class FrameThatTakesScrollablePanel( FrameThatResizes ):
                 ExpandTLWIfPossible( self, self._frame_key, ( desired_delta_width, desired_delta_height ) )
                 
             
+        
+    
+    def GetPanel( self ):
+        
+        return self._panel
         
     
     def SetPanel( self, panel ):

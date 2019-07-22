@@ -1,6 +1,6 @@
-import ClientConstants as CC
-import ClientGUIShortcuts
-import ClientGUITopLevelWindows
+from . import ClientConstants as CC
+from . import ClientGUIShortcuts
+from . import ClientGUITopLevelWindows
 import wx
 import wx.lib.scrolledpanel
 
@@ -28,11 +28,21 @@ class ResizingScrolledPanel( wx.lib.scrolledpanel.ScrolledPanel ):
         return True
         
     
+    def CleanBeforeDestroy( self ):
+        
+        pass
+        
+    
     def EventSizeChanged( self, event ):
         
         self.SetVirtualSize( self.GetBestVirtualSize() )
         
         event.Skip()
+        
+    
+    def TryToClose( self ):
+        
+        pass
         
     
 class EditPanel( ResizingScrolledPanel ):
@@ -137,12 +147,5 @@ class ReviewSinglePanelPanel( ReviewPanel ):
         self._panel = panel
         
         self._vbox.Add( panel, CC.FLAGS_EXPAND_BOTH_WAYS )
-        
-    
-class ReviewPanelVetoable( ResizingScrolledPanel ):
-    
-    def TryToClose( self ):
-        
-        return
         
     

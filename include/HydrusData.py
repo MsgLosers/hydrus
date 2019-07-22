@@ -1,12 +1,12 @@
 import bs4
 import collections
 import cProfile
-import cStringIO
-import HydrusConstants as HC
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
-import HydrusText
+import io
+from . import HydrusConstants as HC
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
+from . import HydrusText
 import locale
 import os
 import pstats
@@ -48,8 +48,6 @@ def CalculateScoreFromRating( count, rating ):
     
     # http://www.evanmiller.org/how-not-to-sort-by-average-rating.html
     
-    count = float( count )
-    
     positive = count * rating
     negative = count * ( 1.0 - rating )
     
@@ -75,46 +73,7 @@ def CleanRunningFile( db_path, instance ):
     
 def ConvertFloatToPercentage( f ):
     
-    return '%.1f' % ( f * 100 ) + '%'
-    
-def ConvertIntToBytes( size ):
-    
-    if size is None:
-        
-        return 'unknown size'
-        
-    
-    if size < 1024:
-        
-        return ToHumanInt( size ) + 'B'
-        
-    
-    suffixes = ( '', 'K', 'M', 'G', 'T', 'P' )
-    
-    suffix_index = 0
-    
-    size = float( size )
-    
-    while size >= 1024.0:
-        
-        size = size / 1024.0
-        
-        suffix_index += 1
-        
-    
-    if size < 10.0:
-        
-        return '%.1f' % size + suffixes[ suffix_index ] + 'B'
-        
-    else:
-        
-        return '%.0f' % size + suffixes[ suffix_index ] + 'B'
-        
-    
-def ConvertIntToFirst( n ):
-    
-    # straight from stack, wew
-    return "%d%s" % (n,"tsnrhtdd"[(n/10%10!=1)*(n%10<4)*n%10::4])
+    return '{:.1f}%'.format( f * 100 )
     
 def ConvertIntToPixels( i ):
     
@@ -155,34 +114,30 @@ def ConvertIntToUnit( unit ):
     
 def ConvertMillisecondsToPrettyTime( ms ):
     
-    hours = ms / 3600000
+    hours = ms // 3600000
     
     if hours == 1: hours_result = '1 hour'
     else: hours_result = str( hours ) + ' hours'
     
     ms = ms % 3600000
     
-    minutes = ms / 60000
+    minutes = ms // 60000
     
     if minutes == 1: minutes_result = '1 minute'
     else: minutes_result = str( minutes ) + ' minutes'
     
     ms = ms % 60000
     
-    seconds = ms / 1000
+    seconds = ms // 1000
     
     if seconds == 1: seconds_result = '1 second'
     else: seconds_result = str( seconds ) + ' seconds'
     
-    detailed_seconds = float( ms ) / 1000.0
+    detailed_seconds = ms / 1000
     
-    if detailed_seconds == 1.0: detailed_seconds_result = '1.0 seconds'
-    else:detailed_seconds_result = '%.1f' % detailed_seconds + ' seconds'
+    detailed_seconds_result = '{:.1f} seconds'.format( detailed_seconds )
     
     ms = ms % 1000
-    
-    if ms == 1: milliseconds_result = '1 millisecond'
-    else: milliseconds_result = str( ms ) + ' milliseconds'
     
     if hours > 0: return hours_result + ' ' + minutes_result
     
@@ -190,18 +145,27 @@ def ConvertMillisecondsToPrettyTime( ms ):
     
     if seconds > 0: return detailed_seconds_result
     
+    ms = int( ms )
+    
+    if ms == 1: milliseconds_result = '1 millisecond'
+    else: milliseconds_result = '{} milliseconds'.format( ms )
+    
     return milliseconds_result
     
 def ConvertNumericalRatingToPrettyString( lower, upper, rating, rounded_result = False, out_of = True ):
     
     rating_converted = ( rating * ( upper - lower ) ) + lower
     
-    if rounded_result: s = '%.2f' % round( rating_converted )
-    else: s = '%.2f' % rating_converted
-    
-    if out_of:
+    if rounded_result:
         
-        if lower in ( 0, 1 ): s += '/%.2f' % upper
+        rating_converted = round( rating_converted )
+        
+    
+    s = '{:.2f}'.format( rating_converted )
+    
+    if out_of and lower in ( 0, 1 ):
+        
+        s += '/{:.2f}'.format( upper )
         
     
     return s
@@ -220,7 +184,9 @@ def ConvertPrettyStringsToUglyNamespaces( pretty_strings ):
     
     return result
     
-def ConvertResolutionToPrettyString( ( width, height ) ):
+def ConvertResolutionToPrettyString( resolution ):
+    
+    ( width, height ) = resolution
     
     return ToHumanInt( width ) + 'x' + ToHumanInt( height )
     
@@ -231,11 +197,16 @@ def ConvertStatusToPrefix( status ):
     elif status == HC.CONTENT_STATUS_PETITIONED: return '(-) '
     elif status == HC.CONTENT_STATUS_DELETED: return '(X) '
     
-def TimeDeltaToPrettyTimeDelta( seconds ):
+def TimeDeltaToPrettyTimeDelta( seconds, show_seconds = True ):
     
     if seconds is None:
         
         return 'per month'
+        
+    
+    if seconds == 0:
+        
+        return '0 seconds'
         
     
     if seconds < 0:
@@ -260,7 +231,11 @@ def TimeDeltaToPrettyTimeDelta( seconds ):
         lines.append( ( 'day', DAY ) )
         lines.append( ( 'hour', HOUR ) )
         lines.append( ( 'minute', MINUTE ) )
-        lines.append( ( 'second', 1 ) )
+        
+        if show_seconds:
+            
+            lines.append( ( 'second', 1 ) )
+            
         
         result_components = []
         
@@ -305,7 +280,7 @@ def TimeDeltaToPrettyTimeDelta( seconds ):
             
         else:
             
-            result = '%.1f' % seconds + ' seconds'
+            result = '{:.1f} seconds'.format( seconds )
             
         
     elif seconds == 1:
@@ -314,19 +289,19 @@ def TimeDeltaToPrettyTimeDelta( seconds ):
         
     elif seconds > 0.1:
         
-        result = '%d' % ( seconds * 1000 ) + ' milliseconds'
+        result = '{} milliseconds'.format( int( seconds * 1000 ) )
         
     elif seconds > 0.01:
         
-        result = '%.1f' % ( seconds * 1000 ) + ' milliseconds'
+        result = '{:.1f} milliseconds'.format( int( seconds * 1000 ) )
         
     elif seconds > 0.001:
         
-        result = '%.2f' % ( seconds * 1000 ) + ' milliseconds'
+        result = '{:.2f} milliseconds'.format( int( seconds * 1000 ) )
         
     else:
         
-        result = '%d' % ( seconds * 1000000 ) + ' microseconds'
+        result = '{} microseconds'.format( int( seconds * 1000000 ) )
         
     
     return result
@@ -343,17 +318,29 @@ def ConvertTimestampToPrettyExpires( timestamp ):
         return 'unknown expiration'
         
     
-    time_delta_string = TimestampToPrettyTimeDelta( timestamp )
-    
-    if TimeHasPassed( timestamp ):
+    try:
         
-        return 'expired ' + time_delta_string
+        time_delta_string = TimestampToPrettyTimeDelta( timestamp )
         
-    else:
-        return 'expires ' + time_delta_string
+        if TimeHasPassed( timestamp ):
+            
+            return 'expired ' + time_delta_string
+            
+        else:
+            return 'expires ' + time_delta_string
+            
+        
+    except:
+        
+        return 'unparseable time {}'.format( timestamp )
         
     
 def ConvertTimestampToPrettyTime( timestamp, in_gmt = False, include_24h_time = True ):
+    
+    if timestamp is None:
+        
+        return 'no time given'
+        
     
     if include_24h_time:
         
@@ -364,20 +351,27 @@ def ConvertTimestampToPrettyTime( timestamp, in_gmt = False, include_24h_time = 
         phrase = '%Y/%m/%d'
         
     
-    if in_gmt:
+    try:
         
-        struct_time = time.gmtime( timestamp )
+        if in_gmt:
+            
+            struct_time = time.gmtime( timestamp )
+            
+            phrase = phrase + ' GMT'
+            
+        else:
+            
+            struct_time = time.localtime( timestamp )
+            
         
-        phrase = phrase + ' GMT'
+        return time.strftime( phrase, struct_time )
         
-    else:
+    except:
         
-        struct_time = time.localtime( timestamp )
+        return 'unparseable time {}'.format( timestamp )
         
     
-    return time.strftime( phrase, struct_time )
-    
-def TimestampToPrettyTimeDelta( timestamp, just_now_string = 'now', just_now_threshold = 3 ):
+def TimestampToPrettyTimeDelta( timestamp, just_now_string = 'now', just_now_threshold = 3, show_seconds = True ):
     
     if timestamp is None:
         
@@ -389,22 +383,34 @@ def TimestampToPrettyTimeDelta( timestamp, just_now_string = 'now', just_now_thr
         return ConvertTimestampToPrettyTime( timestamp )
         
     
-    time_delta = abs( timestamp - GetNow() )
-    
-    if time_delta <= just_now_threshold:
+    if not show_seconds:
         
-        return just_now_string
+        just_now_threshold = max( just_now_threshold, 60 )
         
     
-    time_delta_string = TimeDeltaToPrettyTimeDelta( time_delta )
-    
-    if TimeHasPassed( timestamp ):
+    try:
         
-        return time_delta_string + ' ago'
+        time_delta = abs( timestamp - GetNow() )
         
-    else:
+        if time_delta <= just_now_threshold:
+            
+            return just_now_string
+            
         
-        return 'in ' + time_delta_string
+        time_delta_string = TimeDeltaToPrettyTimeDelta( time_delta, show_seconds = show_seconds )
+        
+        if TimeHasPassed( timestamp ):
+            
+            return time_delta_string + ' ago'
+            
+        else:
+            
+            return 'in ' + time_delta_string
+            
+        
+    except:
+        
+        return 'unparseable time {}'.format( timestamp )
         
     
 def ConvertUglyNamespaceToPrettyString( namespace ):
@@ -437,11 +443,69 @@ def ConvertUnitToInt( unit ):
     
 def ConvertValueRangeToBytes( value, range ):
     
-    return ConvertIntToBytes( value ) + '/' + ConvertIntToBytes( range )
+    return ToHumanBytes( value ) + '/' + ToHumanBytes( range )
     
 def ConvertValueRangeToPrettyString( value, range ):
     
     return ToHumanInt( value ) + '/' + ToHumanInt( range )
+    
+def ConvertValueRangeToScanbarTimestampsMS( value_ms, range_ms ):
+    
+    value_ms = int( round( value_ms ) )
+    
+    range_hours = range_ms // 3600000
+    value_hours = value_ms // 3600000
+    range_minutes = ( range_ms % 3600000 ) // 60000
+    value_minutes = ( value_ms % 3600000 ) // 60000
+    range_seconds = ( range_ms % 60000 ) // 1000
+    value_seconds = ( value_ms % 60000 ) // 1000
+    range_ms = range_ms % 1000
+    value_ms = value_ms % 1000
+    
+    if range_hours > 0:
+        
+        # 0:01:23.033/1:12:57.067
+        
+        time_phrase = '{}:{:0>2}:{:0>2}.{:0>3}'
+        
+        args = ( value_hours, value_minutes, value_seconds, value_ms, range_hours, range_minutes, range_seconds, range_ms )
+        
+    elif range_minutes > 0:
+        
+        # 01:23.033/12:57.067 or 0:23.033/1:57.067
+        
+        if range_minutes > 9:
+            
+            time_phrase = '{:0>2}:{:0>2}.{:0>3}'
+            
+        else:
+            
+            time_phrase = '{:0>1}:{:0>2}.{:0>3}'
+            
+        
+        args = ( value_minutes, value_seconds, value_ms, range_minutes, range_seconds, range_ms )
+        
+    else:
+        
+        # 23.033/57.067 or 3.033/7.067 or 0.033/0.067
+        
+        if range_seconds > 9:
+            
+            time_phrase = '{:0>2}.{:0>3}'
+            
+        else:
+            
+            time_phrase = '{:0>1}.{:0>3}'
+            
+        
+        args = ( value_seconds, value_ms, range_seconds, range_ms )
+        
+    
+    full_phrase = '{}/{}'.format( time_phrase, time_phrase )
+    
+    result = full_phrase.format( *args )
+    
+    return result
     
 def DebugPrint( debug_info ):
     
@@ -469,25 +533,6 @@ def DedupeList( xs ):
         
     
     return xs_return
-    
-def EncodeBytes( encoding, data ):
-    
-    data = ToByteString( data )
-    
-    if encoding == HC.ENCODING_RAW:
-        
-        encoded_data = data
-        
-    elif encoding == HC.ENCODING_HEX:
-        
-        encoded_data = data.encode( 'hex' )
-        
-    elif encoding == HC.ENCODING_BASE64:
-        
-        encoded_data = data.encode( 'base64' )
-        
-    
-    return encoded_data
     
 def GenerateKey():
     
@@ -525,23 +570,6 @@ def GetEmptyDataDict():
     
     return data
     
-def GetHideTerminalSubprocessStartupInfo():
-    
-    if HC.PLATFORM_WINDOWS:
-        
-        # This suppresses the terminal window that tends to pop up when calling ffmpeg or whatever
-        
-        startupinfo = subprocess.STARTUPINFO()
-        
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        
-    else:
-        
-        startupinfo = None
-        
-    
-    return startupinfo
-    
 def GetNow():
     
     return int( time.time() )
@@ -567,13 +595,13 @@ def GetSiblingProcessPorts( db_path, instance ):
     
     if os.path.exists( path ):
         
-        with open( path, 'rb' ) as f:
+        with open( path, 'r', encoding = 'utf-8' ) as f:
             
-            result = f.read()
+            file_text = f.read()
             
             try:
                 
-                ( pid, create_time ) = HydrusText.DeserialiseNewlinedTexts( result )
+                ( pid, create_time ) = HydrusText.DeserialiseNewlinedTexts( file_text )
                 
                 pid = int( pid )
                 create_time = float( create_time )
@@ -610,6 +638,129 @@ def GetSiblingProcessPorts( db_path, instance ):
         
     
     return None
+    
+def GetSubprocessEnv():
+    
+    if HG.subprocess_report_mode:
+        
+        env = os.environ.copy()
+        
+        ShowText( 'Your unmodified env is: {}'.format( env ) )
+        
+    
+    if HC.RUNNING_FROM_FROZEN_BUILD:
+        
+        # let's make a proper env for subprocess that doesn't have pyinstaller woo woo in it
+        
+        env = os.environ.copy()
+        
+        changes_made = False
+        
+        lp_key = 'LD_LIBRARY_PATH'
+        lp_orig_key = lp_key + '_ORIG'
+        
+        if lp_orig_key in env:
+            
+            env[ lp_key ] = env[ lp_orig_key ]
+            
+            changes_made = True
+            
+        elif lp_key in env:
+            
+            del env[ lp_key ]
+            
+            changes_made = True
+            
+        
+        if ( HC.PLATFORM_LINUX or HC.PLATFORM_OSX ) and 'PATH' in env:
+            
+            # fix for pyinstaller, which drops this stuff for some reason and hence breaks ffmpeg
+            
+            path = env[ 'PATH' ]
+            
+            path_locations = set( path.split( ':' ) )
+            desired_path_locations = [ '/usr/bin', '/usr/local/bin' ]
+            
+            for desired_path_location in desired_path_locations:
+                
+                if desired_path_location not in path_locations:
+                    
+                    path = desired_path_location + ':' + path
+                    
+                    env[ 'PATH' ] = path
+                    
+                    changes_made = True
+                    
+                
+            
+        
+        if not changes_made:
+            
+            env = None
+            
+        
+    else:
+        
+        env = None
+        
+    
+    return env
+    
+def GetSubprocessHideTerminalStartupInfo():
+    
+    if HC.PLATFORM_WINDOWS:
+        
+        # This suppresses the terminal window that tends to pop up when calling ffmpeg or whatever
+        
+        startupinfo = subprocess.STARTUPINFO()
+        
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
+    else:
+        
+        startupinfo = None
+        
+    
+    return startupinfo
+    
+def GetSubprocessKWArgs( hide_terminal = True, text = False ):
+    
+    sbp_kwargs = {}
+    
+    sbp_kwargs[ 'env' ] = GetSubprocessEnv()
+    
+    if text:
+        
+        # probably need to override the stdXXX pipes with i/o encoding wrappers in the case of 3.5 here
+        
+        if sys.version_info.minor >= 6:
+            
+            sbp_kwargs[ 'encoding' ] = 'utf-8'
+            
+        
+        if sys.version_info.minor >= 7:
+            
+            sbp_kwargs[ 'text' ] = True
+            
+        else:
+            
+            sbp_kwargs[ 'universal_newlines' ] = True
+            
+        
+    
+    if hide_terminal:
+        
+        sbp_kwargs[ 'startupinfo' ] = GetSubprocessHideTerminalStartupInfo()
+        
+    
+    if HG.subprocess_report_mode:
+        
+        message = 'KWargs are: {}'.format( sbp_kwargs )
+        
+        ShowText( message )
+        
+    
+    return sbp_kwargs
     
 def GetTimeDeltaSinceTime( timestamp ):
     
@@ -648,15 +799,21 @@ def GetTypeName( obj_type ):
         return repr( obj_type )
         
     
-def HumanTextSort( texts ):
+def GenerateHumanTextSortKey():
     """Solves the 19, 20, 200, 21, 22 issue when sorting 'Page 21.jpg' type strings.
-    Breaks the string into groups of text and int."""
+    Breaks the string into groups of text and int (i.e. ( "Page ", 21, ".jpg" ) )."""
     
-    convert = lambda text: int( text ) if text.isdecimal() else text
+    int_convert = lambda t: int( t ) if t.isdecimal() else t
     
-    alphanum = lambda key: [ convert( c ) for c in re.split( '([0-9]+)', key.lower(), flags = re.UNICODE ) ]
+    split_alphanum = lambda t: tuple( ( int_convert( sub_t ) for sub_t in re.split( '([0-9]+)', t.lower() ) ) )
     
-    texts.sort( key = alphanum ) 
+    return split_alphanum
+    
+HumanTextSortKey = GenerateHumanTextSortKey()
+
+def HumanTextSort( texts ):
+    
+    texts.sort( key = HumanTextSortKey ) 
     
 def IntelligentMassIntersect( sets_to_reduce ):
     
@@ -706,13 +863,13 @@ def IsAlreadyRunning( db_path, instance ):
     
     if os.path.exists( path ):
         
-        with open( path, 'rb' ) as f:
+        with open( path, 'r', encoding = 'utf-8' ) as f:
             
-            result = f.read()
+            file_text = f.read()
             
             try:
                 
-                ( pid, create_time ) = HydrusText.DeserialiseNewlinedTexts( result )
+                ( pid, create_time ) = HydrusText.DeserialiseNewlinedTexts( file_text )
                 
                 pid = int( pid )
                 create_time = float( create_time )
@@ -785,7 +942,7 @@ def MedianPop( population ):
     
     # assume it has at least one and comes sorted
     
-    median_index = len( population ) / 2
+    median_index = len( population ) // 2
     
     row = population.pop( median_index )
     
@@ -797,7 +954,7 @@ def MergeKeyToListDicts( key_to_list_dicts ):
     
     for key_to_list_dict in key_to_list_dicts:
         
-        for ( key, value ) in key_to_list_dict.items(): result[ key ].extend( value )
+        for ( key, value ) in list(key_to_list_dict.items()): result[ key ].extend( value )
         
     
     return result
@@ -806,7 +963,7 @@ def Print( text ):
     
     try:
         
-        print( ToUnicode( text ) )
+        print( str( text ) )
         
     except:
         
@@ -824,14 +981,12 @@ def PrintException( e, do_wait = True ):
     
     etype = type( e )
     
-    value = ToUnicode( e )
-    
     ( etype, value, tb ) = sys.exc_info()
     
     if etype is None:
         
         etype = type( e )
-        value = ToUnicode( e )
+        value = str( e )
         
         trace = 'No error trace'
         
@@ -844,7 +999,7 @@ def PrintException( e, do_wait = True ):
     
     stack = ''.join( stack_list )
     
-    message = ToUnicode( etype.__name__ ) + ': ' + ToUnicode( value ) + os.linesep + ToUnicode( trace ) + os.linesep + ToUnicode( stack )
+    message = str( etype.__name__ ) + ': ' + str( value ) + os.linesep + trace + os.linesep + stack
     
     Print( '' )
     Print( 'Exception:' )
@@ -873,7 +1028,7 @@ def Profile( summary, code, g, l, min_duration_ms = 20 ):
     
     if time_took_ms > min_duration_ms:
         
-        output = cStringIO.StringIO()
+        output = io.StringIO()
         
         stats = pstats.Stats( profile, stream = output )
         
@@ -931,9 +1086,9 @@ def RecordRunningStart( db_path, instance ):
         return
         
     
-    with open( path, 'wb' ) as f:
+    with open( path, 'w', encoding = 'utf-8' ) as f:
         
-        f.write( ToByteString( record_string ) )
+        f.write( record_string )
         
     
 def RestartProcess():
@@ -991,7 +1146,7 @@ def SplitListIntoChunks( xs, n ):
         xs = list( xs )
         
     
-    for i in xrange( 0, len( xs ), n ):
+    for i in range( 0, len( xs ), n ):
         
         yield xs[ i : i + n ]
         
@@ -1045,96 +1200,47 @@ def TimeUntil( timestamp ):
     
     return timestamp - GetNow()
     
-def ToByteString( text_producing_object ):
+def ToHumanBytes( size ):
     
-    if isinstance( text_producing_object, unicode ):
+    if size is None:
         
-        return text_producing_object.encode( 'utf-8' )
+        return 'unknown size'
         
-    elif isinstance( text_producing_object, str ):
+    
+    if size < 1024:
         
-        return text_producing_object
+        return ToHumanInt( size ) + 'B'
+        
+    
+    suffixes = ( '', 'K', 'M', 'G', 'T', 'P' )
+    
+    suffix_index = 0
+    
+    while size >= 1024:
+        
+        size = size / 1024
+        
+        suffix_index += 1
+        
+    
+    suffix = suffixes[ suffix_index ]
+    
+    if size < 10.0:
+        
+        # 3.1MB
+        
+        return '{:.1f}{}B'.format( size, suffix )
         
     else:
         
-        try:
-            
-            return str( text_producing_object )
-            
-        except:
-            
-            return str( repr( text_producing_object ) )
-            
+        # 23MB
+        
+        return '{:.0f}{}B'.format( size, suffix )
         
     
 def ToHumanInt( num ):
     
-    # don't feed this a unicode string u'%d'--locale can't handle it
-    text = locale.format( '%d', num, grouping = True )
-    
-    try:
-        
-        text = text.decode( locale.getpreferredencoding() )
-        
-        text = ToUnicode( text )
-        
-    except:
-        
-        text = ToUnicode( text )
-        
-    
-    return text
-    
-def ToUnicode( text_producing_object ):
-    
-    if isinstance( text_producing_object, ( str, unicode, bs4.element.NavigableString ) ):
-        
-        text = text_producing_object
-        
-    else:
-        
-        try:
-            
-            text = str( text_producing_object ) # dealing with exceptions, etc...
-            
-        except:
-            
-            try:
-                
-                text = unicode( text_producing_object )
-                
-            except:
-                
-                text = repr( text_producing_object )
-                
-            
-        
-    
-    if not isinstance( text, unicode ):
-        
-        try:
-            
-            text = text.decode( 'utf-8' )
-            
-        except UnicodeDecodeError:
-            
-            try:
-                
-                text = text.decode( locale.getpreferredencoding() )
-                
-            except:
-                
-                try:
-                    
-                    text = text.decode( 'utf-16' )
-                    
-                except:
-                    
-                    text = unicode( repr( text ) )
-                    
-                
-            
-        
+    text = locale.format_string( '%d', num, grouping = True )
     
     return text
     
@@ -1190,13 +1296,13 @@ class AccountIdentifier( HydrusSerialisable.SerialisableBase ):
     
     def __ne__( self, other ): return self.__hash__() != other.__hash__()
     
-    def __repr__( self ): return 'Account Identifier: ' + ToUnicode( ( self._type, self._data ) )
+    def __repr__( self ): return 'Account Identifier: ' + str( ( self._type, self._data ) )
     
     def _GetSerialisableInfo( self ):
         
         if self._type == self.TYPE_ACCOUNT_KEY:
             
-            serialisable_data = self._data.encode( 'hex' )
+            serialisable_data = self._data.hex()
             
         elif self._type == self.TYPE_CONTENT:
             
@@ -1212,7 +1318,7 @@ class AccountIdentifier( HydrusSerialisable.SerialisableBase ):
         
         if self._type == self.TYPE_ACCOUNT_KEY:
             
-            self._data = serialisable_data.decode( 'hex' )
+            self._data = bytes.fromhex( serialisable_data )
             
         elif self._type == self.TYPE_CONTENT:
             
@@ -1230,7 +1336,7 @@ HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIAL
 
 class AccountType( HydrusYAMLBase ):
     
-    yaml_tag = u'!AccountType'
+    yaml_tag = '!AccountType'
     
     def __init__( self, title, permissions, max_monthly_data ):
         
@@ -1266,7 +1372,7 @@ class AccountType( HydrusYAMLBase ):
         ( max_num_bytes, max_num_requests ) = self._max_monthly_data
         
         if max_num_bytes is None: max_num_bytes_string = 'No limit'
-        else: max_num_bytes_string = ConvertIntToBytes( max_num_bytes )
+        else: max_num_bytes_string = ToHumanBytes( max_num_bytes )
         
         return max_num_bytes_string
         
@@ -1338,11 +1444,12 @@ class Call( object ):
     
 class ContentUpdate( object ):
     
-    def __init__( self, data_type, action, row ):
+    def __init__( self, data_type, action, row, reason = None ):
         
         self._data_type = data_type
         self._action = action
         self._row = row
+        self._reason = reason
         
     
     def __eq__( self, other ):
@@ -1359,7 +1466,7 @@ class ContentUpdate( object ):
     
     def __repr__( self ):
         
-        return 'Content Update: ' + ToUnicode( ( self._data_type, self._action, self._row ) )
+        return 'Content Update: ' + str( ( self._data_type, self._action, self._row, self._reason ) )
         
     
     def GetAction( self ):
@@ -1386,13 +1493,9 @@ class ContentUpdate( object ):
                 
                 hashes = { file_info_manager.hash }
                 
-            elif self._action in ( HC.CONTENT_UPDATE_ARCHIVE, HC.CONTENT_UPDATE_DELETE, HC.CONTENT_UPDATE_UNDELETE, HC.CONTENT_UPDATE_INBOX, HC.CONTENT_UPDATE_PEND, HC.CONTENT_UPDATE_RESCIND_PEND, HC.CONTENT_UPDATE_RESCIND_PETITION ):
+            else:
                 
                 hashes = self._row
-                
-            elif self._action == HC.CONTENT_UPDATE_PETITION:
-                
-                ( hashes, reason ) = self._row
                 
             
         elif self._data_type == HC.CONTENT_TYPE_DIRECTORIES:
@@ -1408,10 +1511,6 @@ class ContentUpdate( object ):
             if self._action == HC.CONTENT_UPDATE_ADVANCED:
                 
                 hashes = set()
-                
-            elif self._action == HC.CONTENT_UPDATE_PETITION:
-                
-                ( tag, hashes, reason ) = self._row
                 
             else:
                 
@@ -1438,6 +1537,12 @@ class ContentUpdate( object ):
                 hashes = { hash }
                 
             
+        elif self._data_type == HC.CONTENT_TYPE_FILE_VIEWING_STATS:
+            
+            ( hash, preview_views_delta, preview_viewtime_delta, media_views_delta, media_viewtime_delta ) = self._row
+            
+            hashes = { hash }
+            
         
         if not isinstance( hashes, set ):
             
@@ -1445,6 +1550,18 @@ class ContentUpdate( object ):
             
         
         return hashes
+        
+    
+    def GetReason( self ):
+        
+        if self._reason is None:
+            
+            return 'No reason given.'
+            
+        else:
+            
+            return self._reason
+            
         
     
     def GetWeight( self ):

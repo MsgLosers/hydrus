@@ -1,17 +1,18 @@
-import ClientCaches
-import ClientData
-import ClientConstants as CC
-import ClientGUIMenus
-import ClientGUITopLevelWindows
-import ClientMedia
-import ClientPaths
-import ClientRatings
-import ClientThreading
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusText
+from . import ClientCaches
+from . import ClientData
+from . import ClientConstants as CC
+from . import ClientGUIFunctions
+from . import ClientGUIMenus
+from . import ClientGUITopLevelWindows
+from . import ClientMedia
+from . import ClientPaths
+from . import ClientRatings
+from . import ClientThreading
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusText
 import os
 import re
 import sys
@@ -25,442 +26,6 @@ ID_TIMER_ANIMATED = wx.NewId()
 ID_TIMER_SLIDESHOW = wx.NewId()
 ID_TIMER_MEDIA_INFO_DISPLAY = wx.NewId()
 
-def ApplyContentApplicationCommandToMedia( parent, command, media ):
-    
-    data = command.GetData()
-    
-    ( service_key, content_type, action, value ) = data
-    
-    try:
-        
-        service = HG.client_controller.services_manager.GetService( service_key )
-        
-    except HydrusExceptions.DataMissing:
-        
-        command_processed = False
-        
-        return command_processed
-        
-    
-    service_type = service.GetServiceType()
-    
-    hashes = set()
-    
-    for m in media:
-        
-        hashes.update( m.GetHashes() )
-        
-    
-    if service_type in HC.TAG_SERVICES:
-        
-        tag = value
-        
-        can_add = False
-        can_pend = False
-        can_delete = False
-        can_petition = True
-        can_rescind_pend = False
-        can_rescind_petition = False
-        
-        for m in media:
-            
-            tags_manager = m.GetTagsManager()
-            
-            current = tags_manager.GetCurrent( service_key )
-            pending = tags_manager.GetPending( service_key )
-            petitioned = tags_manager.GetPetitioned( service_key )
-            
-            if tag not in current:
-                
-                can_add = True
-                
-            
-            if tag not in current and tag not in pending:
-                
-                can_pend = True
-                
-            
-            if tag in current and action == HC.CONTENT_UPDATE_FLIP:
-                
-                can_delete = True
-                
-            
-            if tag in current and tag not in petitioned and action == HC.CONTENT_UPDATE_FLIP:
-                
-                can_petition = True
-                
-            
-            if tag in pending and action == HC.CONTENT_UPDATE_FLIP:
-                
-                can_rescind_pend = True
-                
-            
-            if tag in petitioned:
-                
-                can_rescind_petition = True
-                
-            
-        
-        if service_type == HC.LOCAL_TAG:
-            
-            tags = [ tag ]
-            
-            if can_add:
-                
-                content_update_action = HC.CONTENT_UPDATE_ADD
-                
-                tag_parents_manager = HG.client_controller.GetManager( 'tag_parents' )
-                
-                parents = tag_parents_manager.GetParents( service_key, tag )
-                
-                tags.extend( parents )
-                
-            elif can_delete:
-                
-                content_update_action = HC.CONTENT_UPDATE_DELETE
-                
-            else:
-                
-                return True
-                
-            
-            rows = [ ( tag, hashes ) for tag in tags ]
-            
-        else:
-            
-            if can_rescind_petition:
-                
-                content_update_action = HC.CONTENT_UPDATE_RESCIND_PETITION
-                
-                rows = [ ( tag, hashes ) ]
-                
-            elif can_pend:
-                
-                tags = [ tag ]
-                
-                content_update_action = HC.CONTENT_UPDATE_PEND
-                
-                tag_parents_manager = HG.client_controller.GetManager( 'tag_parents' )
-                
-                parents = tag_parents_manager.GetParents( service_key, tag )
-                
-                tags.extend( parents )
-                
-                rows = [ ( tag, hashes ) for tag in tags ]
-                
-            elif can_rescind_pend:
-                
-                content_update_action = HC.CONTENT_UPDATE_RESCIND_PEND
-                
-                rows = [ ( tag, hashes ) ]
-                
-            elif can_petition:
-                
-                message = 'Enter a reason for this tag to be removed. A janitor will review your petition.'
-                
-                import ClientGUIDialogs
-                
-                with ClientGUIDialogs.DialogTextEntry( parent, message ) as dlg:
-                    
-                    if dlg.ShowModal() == wx.ID_OK:
-                        
-                        content_update_action = HC.CONTENT_UPDATE_PETITION
-                        
-                        rows = [ ( dlg.GetValue(), tag, hashes ) ]
-                        
-                    else:
-                        
-                        return True
-                        
-                    
-                
-            else:
-                
-                return True
-                
-            
-        
-        content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, content_update_action, row ) for row in rows ]
-        
-    elif service_type in ( HC.LOCAL_RATING_LIKE, HC.LOCAL_RATING_NUMERICAL ):
-        
-        rating = value
-        
-        can_set = False
-        can_unset = False
-        
-        for m in media:
-            
-            ratings_manager = m.GetRatingsManager()
-            
-            current_rating = ratings_manager.GetRating( service_key )
-            
-            if current_rating == rating and action == HC.CONTENT_UPDATE_FLIP:
-                
-                can_unset = True
-                
-            else:
-                
-                can_set = True
-                
-            
-        
-        if can_set:
-            
-            row = ( rating, hashes )
-            
-        elif can_unset:
-            
-            row = ( None, hashes )
-            
-        else:
-            
-            return True
-            
-        
-        content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_ADD, row ) ]
-        
-    else:
-        
-        return False
-        
-    
-    HG.client_controller.Write( 'content_updates', { service_key : content_updates } )
-    
-    return True
-    
-def ClientToScreen( win, pos ):
-    
-    if isinstance( win, wx.TopLevelWindow ):
-        
-        tlp = win
-        
-    else:
-        
-        tlp = win.GetTopLevelParent()
-        
-    
-    if win.IsShown() and tlp.IsShown():
-        
-        return win.ClientToScreen( pos )
-        
-    else:
-        
-        return ( 50, 50 )
-        
-    
-
-MAGIC_TEXT_PADDING = 1.1
-
-def ConvertTextToPixels( window, ( char_cols, char_rows ) ):
-    
-    dc = wx.ClientDC( window )
-    
-    dc.SetFont( window.GetFont() )
-    
-    return ( int( char_cols * dc.GetCharWidth() * MAGIC_TEXT_PADDING ), int( char_rows * dc.GetCharHeight() * MAGIC_TEXT_PADDING ) )
-    
-def ConvertTextToPixelWidth( window, char_cols ):
-    
-    dc = wx.ClientDC( window )
-    
-    dc.SetFont( window.GetFont() )
-    
-    return int( char_cols * dc.GetCharWidth() * MAGIC_TEXT_PADDING )
-    
-def GetFocusTLP():
-    
-    focus = wx.Window.FindFocus()
-    
-    return GetTLP( focus )
-    
-def GetTLP( window ):
-    
-    if window is None:
-        
-        return None
-        
-    elif isinstance( window, wx.TopLevelWindow ):
-        
-        return window
-        
-    else:
-        
-        return window.GetTopLevelParent()
-        
-    
-def GetTLPParents( window ):
-    
-    if not isinstance( window, wx.TopLevelWindow ):
-        
-        window = GetTLP( window )
-        
-    
-    parents = []
-    
-    parent = window.GetParent()
-    
-    while parent is not None:
-        
-        parents.append( parent )
-        
-        parent = parent.GetParent()
-        
-    
-    return parents
-    
-def GetXYTopTLP( screen_position ):
-    
-    tlps = wx.GetTopLevelWindows()
-    
-    hittest_tlps = [ tlp for tlp in tlps if tlp.HitTest( tlp.ScreenToClient( screen_position ) ) == wx.HT_WINDOW_INSIDE and tlp.IsShown() ]
-    
-    if len( hittest_tlps ) == 0:
-        
-        return None
-        
-    
-    most_childish = hittest_tlps[0]
-    
-    for tlp in hittest_tlps[1:]:
-        
-        if most_childish in GetTLPParents( tlp ):
-            
-            most_childish = tlp
-            
-        
-    
-    return most_childish
-    
-def IsWXAncestor( child, ancestor, through_tlws = False ):
-    
-    parent = child
-    
-    if through_tlws:
-        
-        while not parent is None:
-            
-            if parent == ancestor:
-                
-                return True
-                
-            
-            parent = parent.GetParent()
-            
-        
-    else:
-        
-        while not isinstance( parent, wx.TopLevelWindow ):
-            
-            if parent == ancestor:
-                
-                return True
-                
-            
-            parent = parent.GetParent()
-            
-        
-    
-    return False
-    
-def NotebookScreenToHitTest( notebook, screen_position ):
-    
-    if HC.PLATFORM_OSX:
-        
-        # OS X has some unusual coordinates for its notebooks
-        # the notebook tabs are not considered to be in the client area (they are actually negative on getscreenposition())
-        # its hittest works on window coords, not client coords
-        # hence to get hittest position, we get our parent's client position and adjust by our given position in that
-        
-        # this also seems to cause menus popped on notebooks to spawn high and left, wew
-        
-        ( my_x, my_y ) = notebook.GetPosition()
-        
-        ( p_x, p_y ) = notebook.GetParent().ScreenToClient( wx.GetMousePosition() )
-        
-        position = ( p_x - my_x, p_y - my_y )
-        
-    else:
-        
-        position = notebook.ScreenToClient( screen_position )
-        
-    
-    return notebook.HitTest( position )
-    
-def SetBitmapButtonBitmap( button, bitmap ):
-    
-    # the button's bitmap, retrieved via GetBitmap, is not the same as the one we gave it!
-    # hence testing bitmap vs that won't work to save time on an update loop, so we'll just save it here custom
-    # this isn't a big memory deal for our purposes since they are small and mostly if not all from the GlobalBMPs library so shared anyway
-    
-    if hasattr( button, 'last_bitmap' ):
-        
-        if button.last_bitmap == bitmap:
-            
-            return
-            
-        
-    
-    button.SetBitmap( bitmap )
-    
-    button.last_bitmap = bitmap
-    
-def TLPHasFocus( window ):
-    
-    focus_tlp = GetFocusTLP()
-    
-    window_tlp = GetTLP( window )
-    
-    return window_tlp == focus_tlp
-    
-def WindowHasFocus( window ):
-    
-    focus = wx.Window.FindFocus()
-    
-    if focus is None:
-        
-        return False
-        
-    
-    return window == focus
-    
-def WindowOrAnyTLPChildHasFocus( window ):
-    
-    focus = wx.Window.FindFocus()
-    
-    while focus is not None:
-        
-        if focus == window:
-            
-            return True
-            
-        
-        focus = focus.GetParent()
-        
-    
-    return False
-    
-def WindowOrSameTLPChildHasFocus( window ):
-    
-    focus = wx.Window.FindFocus()
-    
-    while focus is not None:
-        
-        if focus == window:
-            
-            return True
-            
-        
-        if isinstance( focus, wx.TopLevelWindow ):
-            
-            return False
-            
-        
-        focus = focus.GetParent()
-        
-    
-    return False
-    
 def WrapInGrid( parent, rows, expand_text = False ):
     
     gridbox = wx.FlexGridSizer( 2 )
@@ -522,15 +87,87 @@ def WrapInText( control, parent, text, colour = None ):
     
     return hbox
     
-class BetterBitmapButton( wx.BitmapButton ):
+class ShortcutAwareToolTipMixin( object ):
+    
+    def __init__( self, tt_callable ):
+        
+        self._tt_callable = tt_callable
+        
+        self._tt = ''
+        self._simple_shortcut_command = None
+        
+        HG.client_controller.sub( self, 'NotifyNewShortcuts', 'notify_new_shortcuts_gui' )
+        
+    
+    def _RefreshToolTip( self ):
+        
+        tt = self._tt
+        
+        if self._simple_shortcut_command is not None:
+            
+            tt += os.linesep * 2
+            tt += '----------'
+            
+            names_to_shortcuts = HG.client_controller.shortcuts_manager.GetNamesToShortcuts( self._simple_shortcut_command )
+            
+            if len( names_to_shortcuts ) > 0:
+                
+                names = list( names_to_shortcuts.keys() )
+                
+                names.sort()
+                
+                for name in names:
+                    
+                    shortcuts = names_to_shortcuts[ name ]
+                    
+                    shortcut_strings = [ shortcut.ToString() for shortcut in shortcuts ]
+                    
+                    shortcut_strings.sort()
+                    
+                    tt += os.linesep * 2
+                    
+                    tt += ', '.join( shortcut_strings )
+                    tt += os.linesep
+                    tt += '({}->{})'.format( name, self._simple_shortcut_command )
+                    
+                
+            else:
+                
+                tt += os.linesep * 2
+                
+                tt += 'no shortcuts set'
+                tt += os.linesep
+                tt += '({})'.format( self._simple_shortcut_command )
+                
+            
+        
+        self._tt_callable( tt )
+        
+    
+    def NotifyNewShortcuts( self ):
+        
+        self._RefreshToolTip()
+        
+    
+    def SetToolTipWithShortcuts( self, tt, simple_shortcut_command ):
+        
+        self._tt = tt
+        self._simple_shortcut_command = simple_shortcut_command
+        
+        self._RefreshToolTip()
+        
+    
+class BetterBitmapButton( wx.BitmapButton, ShortcutAwareToolTipMixin ):
     
     def __init__( self, parent, bitmap, func, *args, **kwargs ):
         
         wx.BitmapButton.__init__( self, parent, bitmap = bitmap )
+        ShortcutAwareToolTipMixin.__init__( self, self.SetToolTip )
         
         self._func = func
         self._args = args
         self._kwargs = kwargs
+        
         self.Bind( wx.EVT_BUTTON, self.EventButton )
         
     
@@ -591,7 +228,7 @@ class BetterBoxSizer( wx.BoxSizer ):
         
         i_am_too_small = ( my_orientation == wx.HORIZONTAL and extra_width < 0 ) or ( my_orientation == wx.VERTICAL and extra_height < 0 )
         
-        total_proportion = float( sum( ( sizer_item.GetProportion() for sizer_item in self.GetChildren() if sizer_item.IsShown() ) ) )
+        total_proportion = sum( ( sizer_item.GetProportion() for sizer_item in self.GetChildren() if sizer_item.IsShown() ) )
         
         for sizer_item in self.GetChildren():
             
@@ -683,11 +320,12 @@ class BetterBoxSizer( wx.BoxSizer ):
             
         
     
-class BetterButton( wx.Button ):
+class BetterButton( wx.Button, ShortcutAwareToolTipMixin ):
     
     def __init__( self, parent, label, func, *args, **kwargs ):
         
         wx.Button.__init__( self, parent, style = wx.BU_EXACTFIT )
+        ShortcutAwareToolTipMixin.__init__( self, self.SetToolTip )
         
         self.SetLabelText( label )
         
@@ -716,6 +354,18 @@ class BetterCheckListBox( wx.CheckListBox ):
         return result
         
     
+    def SetCheckedData( self, datas ):
+        
+        for index in range( self.GetCount() ):
+            
+            data = self.GetClientData( index )
+            
+            check_it = data in datas
+            
+            self.Check( index, check_it )
+            
+        
+    
 class BetterChoice( wx.Choice ):
     
     def Append( self, display_string, client_data ):
@@ -732,9 +382,18 @@ class BetterChoice( wx.Choice ):
         
         selection = self.GetSelection()
         
-        if selection != wx.NOT_FOUND: return self.GetClientData( selection )
-        elif self.GetCount() > 0: return self.GetClientData( 0 )
-        else: return None
+        if selection != wx.NOT_FOUND:
+            
+            return self.GetClientData( selection )
+            
+        elif self.GetCount() > 0:
+            
+            return self.GetClientData( 0 )
+            
+        else:
+            
+            return None
+            
         
     
     def SelectClientData( self, client_data ):
@@ -772,7 +431,7 @@ class BetterColourControl( wx.ColourPickerCtrl ):
             
         except Exception as e:
             
-            wx.MessageBox( HydrusData.ToUnicode( e ) )
+            wx.MessageBox( str( e ) )
             
             return
             
@@ -797,7 +456,7 @@ class BetterColourControl( wx.ColourPickerCtrl ):
             
         except Exception as e:
             
-            wx.MessageBox( HydrusData.ToUnicode( e ) )
+            wx.MessageBox( str( e ) )
             
             HydrusData.ShowException( e )
             
@@ -844,6 +503,19 @@ class BetterNotebook( wx.Notebook ):
     def SelectLeft( self ):
         
         self._ShiftSelection( -1 )
+        
+    
+    def SelectPage( self, page ):
+        
+        for i in range( self.GetPageCount() ):
+            
+            if self.GetPage( i ) == page:
+                
+                self.SetSelection( i )
+                
+                return
+                
+            
         
     
     def SelectRight( self ):
@@ -962,11 +634,11 @@ class BufferedWindow( wx.Window ):
             
             ( x, y ) = kwargs[ 'size' ]
             
-            self._canvas_bmp = wx.Bitmap( x, y, 24 )
+            self._canvas_bmp = HG.client_controller.bitmap_manager.GetBitmap( x, y, 24 )
             
         else:
             
-            self._canvas_bmp = wx.Bitmap( 20, 20, 24 )
+            self._canvas_bmp = HG.client_controller.bitmap_manager.GetBitmap( 20, 20, 24 )
             
         
         self._dirty = True
@@ -1001,7 +673,7 @@ class BufferedWindow( wx.Window ):
         
         if my_width != current_bmp_width or my_height != current_bmp_height:
             
-            self._canvas_bmp = wx.Bitmap( my_width, my_height, 24 )
+            self._canvas_bmp = HG.client_controller.bitmap_manager.GetBitmap( my_width, my_height, 24 )
             
             self._dirty = True
             
@@ -1033,13 +705,25 @@ class BufferedWindowIcon( BufferedWindow ):
     
 class CheckboxCollect( wx.ComboCtrl ):
     
-    def __init__( self, parent, page_key = None ):
+    def __init__( self, parent, management_controller = None ):
         
         wx.ComboCtrl.__init__( self, parent, style = wx.CB_READONLY )
         
-        self._page_key = page_key
+        self._management_controller = management_controller
         
-        self._collect_by = HC.options[ 'default_collect' ]
+        if self._management_controller is not None and self._management_controller.HasVariable( 'media_collect' ):
+            
+            self._collect_by = self._management_controller.GetVariable( 'media_collect' )
+            
+        else:
+            
+            self._collect_by = HC.options[ 'default_collect' ]
+            
+        
+        if self._collect_by is None:
+            
+            self._collect_by = []
+            
         
         popup = self._Popup( self._collect_by )
         
@@ -1047,7 +731,7 @@ class CheckboxCollect( wx.ComboCtrl ):
         
         self.SetPopupControl( popup )
         
-        self.SetValue( 'no collections' )
+        self.SetValue( 'no collections' ) # initialising to this because if there are no collections, no broadcast call goes through
         
     
     def GetChoice( self ):
@@ -1057,11 +741,20 @@ class CheckboxCollect( wx.ComboCtrl ):
     
     def SetCollectTypes( self, collect_by, description ):
         
+        collect_by = list( collect_by )
+        
         self._collect_by = collect_by
         
         self.SetValue( description )
         
-        HG.client_controller.pub( 'collect_media', self._page_key, self._collect_by )
+        if self._management_controller is not None:
+            
+            self._management_controller.SetVariable( 'media_collect', collect_by )
+            
+            page_key = self._management_controller.GetKey( 'page' )
+            
+            HG.client_controller.pub( 'collect_media', page_key, self._collect_by )
+            
         
     
     class _Popup( wx.ComboPopup ):
@@ -1094,7 +787,7 @@ class CheckboxCollect( wx.ComboCtrl ):
         
         def GetStringValue( self ):
             
-            # this is an abstract method that provides the strin to put in the comboctrl
+            # this is an abstract method that provides the string to put in the comboctrl
             # I've never used/needed it, but one user reported getting the NotImplemented thing by repeatedly clicking, so let's add it anyway
             
             if self._control is None:
@@ -1127,7 +820,7 @@ class CheckboxCollect( wx.ComboCtrl ):
                 
                 for ratings_service in ratings_services:
                     
-                    text_and_data_tuples.append( ( ratings_service.GetName(), ( 'rating', ratings_service.GetServiceKey() ) ) )
+                    text_and_data_tuples.append( ( ratings_service.GetName(), ( 'rating', ratings_service.GetServiceKey().hex() ) ) )
                     
                 
                 texts = [ text for ( text, data ) in text_and_data_tuples ] # we do this so it sizes its height properly on init
@@ -1211,29 +904,39 @@ class CheckboxCollect( wx.ComboCtrl ):
             
             def SetValue( self, collect_by ):
                 
-                # an old possible value, now collapsed to []
-                if collect_by is None:
+                try:
                     
-                    collect_by = []
-                    
-                
-                desired_collect_by_rows = set( collect_by )
-                
-                indices_to_check = []
-                
-                for index in range( self.GetCount() ):
-                    
-                    if self.GetClientData( index ) in desired_collect_by_rows:
+                    # an old possible value, now collapsed to []
+                    if collect_by is None:
                         
-                        indices_to_check.append( index )
+                        collect_by = []
                         
                     
-                
-                if len( indices_to_check ) > 0:
+                    # tuple for the set hashing
+                    desired_collect_by_rows = { tuple( item ) for item in collect_by }
                     
-                    self.SetChecked( indices_to_check )
+                    indices_to_check = []
                     
-                    self._BroadcastCollect()
+                    for index in range( self.GetCount() ):
+                        
+                        if self.GetClientData( index ) in desired_collect_by_rows:
+                            
+                            indices_to_check.append( index )
+                            
+                        
+                    
+                    if len( indices_to_check ) > 0:
+                        
+                        self.SetCheckedItems( indices_to_check )
+                        
+                        self._BroadcastCollect()
+                        
+                    
+                except Exception as e:
+                    
+                    HydrusData.ShowText( 'Failed to set a collect-by value!' )
+                    
+                    HydrusData.ShowException( e )
                     
                 
             
@@ -1337,20 +1040,29 @@ class ChoiceSort( wx.Panel ):
         self._sort_type_choice = BetterChoice( self )
         self._sort_asc_choice = BetterChoice( self )
         
-        asc_width = ConvertTextToPixelWidth( self._sort_asc_choice, 15 )
+        asc_width = ClientGUIFunctions.ConvertTextToPixelWidth( self._sort_asc_choice, 15 )
         
         self._sort_asc_choice.SetMinSize( ( asc_width, -1 ) )
         
         sort_types = ClientData.GetSortTypeChoices()
         
+        choice_tuples = []
+        
         for sort_type in sort_types:
             
             example_sort = ClientMedia.MediaSort( sort_type, CC.SORT_ASC )
             
-            self._sort_type_choice.Append( example_sort.GetSortTypeString(), sort_type )
+            choice_tuples.append( ( example_sort.GetSortTypeString(), sort_type ) )
             
         
-        type_width = ConvertTextToPixelWidth( self._sort_type_choice, 10 )
+        choice_tuples.sort()
+        
+        for ( display_string, value ) in choice_tuples:
+            
+            self._sort_type_choice.Append( display_string, value )
+            
+        
+        type_width = ClientGUIFunctions.ConvertTextToPixelWidth( self._sort_type_choice, 10 )
         
         self._sort_type_choice.SetMinSize( ( type_width, -1 ) )
         
@@ -1414,7 +1126,7 @@ class ChoiceSort( wx.Panel ):
         return media_sort
         
     
-    def _UpdateAscLabels( self ):
+    def _UpdateAscLabels( self, set_default_asc = False ):
         
         media_sort = self._GetCurrentSort()
         
@@ -1422,22 +1134,42 @@ class ChoiceSort( wx.Panel ):
         
         if media_sort.CanAsc():
             
-            ( asc_str, desc_str ) = media_sort.GetSortAscStrings()
+            ( asc_str, desc_str, default_asc ) = media_sort.GetSortAscStrings()
             
             self._sort_asc_choice.Append( asc_str, CC.SORT_ASC )
             self._sort_asc_choice.Append( desc_str, CC.SORT_DESC )
             
-            self._sort_asc_choice.SelectClientData( media_sort.sort_asc )
+            if set_default_asc:
+                
+                asc_to_set = default_asc
+                
+            else:
+                
+                asc_to_set = media_sort.sort_asc
+                
+            
+            self._sort_asc_choice.SelectClientData( asc_to_set )
             
             self._sort_asc_choice.Enable()
             
         else:
             
             self._sort_asc_choice.Append( '', CC.SORT_ASC )
+            self._sort_asc_choice.Append( '', CC.SORT_DESC )
             
             self._sort_asc_choice.SelectClientData( CC.SORT_ASC )
             
             self._sort_asc_choice.Disable()
+            
+        
+    
+    def _UserChoseASort( self ):
+        
+        if HG.client_controller.new_options.GetBoolean( 'save_page_sort_on_change' ):
+            
+            media_sort = self._GetCurrentSort()
+            
+            HG.client_controller.new_options.SetDefaultSort( media_sort )
             
         
     
@@ -1466,12 +1198,16 @@ class ChoiceSort( wx.Panel ):
     
     def EventSortAscChoice( self, event ):
         
+        self._UserChoseASort()
+        
         self._BroadcastSort()
         
     
     def EventSortTypeChoice( self, event ):
         
-        self._UpdateAscLabels()
+        self._UserChoseASort()
+        
+        self._UpdateAscLabels( set_default_asc = True )
         
         self._BroadcastSort()
         
@@ -1553,11 +1289,11 @@ class ExportPatternButton( BetterButton ):
         
         ClientGUIMenus.AppendSeparator( menu )
         
-        ClientGUIMenus.AppendMenuItem( self, menu, u'all instances of a particular namespace - [\u2026]', u'copy "[\u2026]" to the clipboard', HG.client_controller.pub, 'clipboard', 'text', u'[\u2026]' )
+        ClientGUIMenus.AppendMenuItem( self, menu, 'all instances of a particular namespace - [\u2026]', 'copy "[\u2026]" to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '[\u2026]' )
         
         ClientGUIMenus.AppendSeparator( menu )
         
-        ClientGUIMenus.AppendMenuItem( self, menu, u'a particular tag, if the file has it - (\u2026)', u'copy "(\u2026)" to the clipboard', HG.client_controller.pub, 'clipboard', 'text', u'(\u2026)' )
+        ClientGUIMenus.AppendMenuItem( self, menu, 'a particular tag, if the file has it - (\u2026)', 'copy "(\u2026)" to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '(\u2026)' )
         
         HG.client_controller.PopupMenu( self, menu )
         
@@ -1636,7 +1372,7 @@ class Gauge( wx.Gauge ):
                 
                 if self._actual_range is not None:
                     
-                    value = min( int( 1000 * ( float( value ) / self._actual_range ) ), 1000 )
+                    value = min( int( 1000 * ( value / self._actual_range ) ), 1000 )
                     
                 
                 value = min( value, self.GetRange() )
@@ -1957,7 +1693,7 @@ class ListBook( wx.Panel ):
     
     def GetActivePages( self ):
         
-        return self._keys_to_active_pages.values()
+        return list(self._keys_to_active_pages.values())
         
     
     def GetPage( self, key ):
@@ -1983,18 +1719,6 @@ class ListBook( wx.Panel ):
     def KeyExists( self, key ):
         
         return key in self._keys_to_active_pages or key in self._keys_to_proto_pages
-        
-    
-    def RenamePage( self, key, new_name ):
-        
-        index = self._GetIndex( key )
-        
-        if index != wx.NOT_FOUND:
-            
-            self._list_box.SetString( index, new_name )
-            
-        
-        self._RecalcListBoxWidth()
         
     
     def Select( self, key ):
@@ -2034,7 +1758,7 @@ class ListBook( wx.Panel ):
     
     def SelectPage( self, page_to_select ):
         
-        for ( key, page ) in self._keys_to_active_pages.items():
+        for ( key, page ) in list(self._keys_to_active_pages.items()):
             
             if page == page_to_select:
                 
@@ -2157,7 +1881,7 @@ class NetworkContextButton( BetterButton ):
     
     def __init__( self, parent, network_context, limited_types = None, allow_default = True ):
         
-        BetterButton.__init__( self, parent, network_context.ToUnicode(), self._Edit )
+        BetterButton.__init__( self, parent, network_context.ToString(), self._Edit )
         
         self._network_context = network_context
         self._limited_types = limited_types
@@ -2166,8 +1890,8 @@ class NetworkContextButton( BetterButton ):
     
     def _Edit( self ):
         
-        import ClientGUITopLevelWindows
-        import ClientGUIScrolledPanelsEdit
+        from . import ClientGUITopLevelWindows
+        from . import ClientGUIScrolledPanelsEdit
         
         with ClientGUITopLevelWindows.DialogEdit( self, 'edit network context' ) as dlg:
             
@@ -2186,7 +1910,7 @@ class NetworkContextButton( BetterButton ):
     
     def _Update( self ):
         
-        self.SetLabelText( self._network_context.ToUnicode() )
+        self.SetLabelText( self._network_context.ToString() )
         
     
     def GetValue( self ):
@@ -2217,7 +1941,7 @@ class NoneableSpinCtrl( wx.Panel ):
         
         self._one = wx.SpinCtrl( self, min = min, max = max )
         
-        width = ConvertTextToPixelWidth( self._one, len( str( max ) ) + 5 )
+        width = ClientGUIFunctions.ConvertTextToPixelWidth( self._one, len( str( max ) ) + 5 )
         
         self._one.SetInitialSize( ( width, -1 ) )
         
@@ -2225,7 +1949,7 @@ class NoneableSpinCtrl( wx.Panel ):
             
             self._two = wx.SpinCtrl( self, initial = 0, min = min, max = max )
             
-            width = ConvertTextToPixelWidth( self._two, len( str( max ) ) + 5 )
+            width = ClientGUIFunctions.ConvertTextToPixelWidth( self._two, len( str( max ) ) + 5 )
             
             self._two.SetInitialSize( ( width, -1 ) )
             
@@ -2337,12 +2061,12 @@ class NoneableSpinCtrl( wx.Panel ):
                 
                 ( value, y ) = value
                 
-                self._two.SetValue( y / self._multiplier )
+                self._two.SetValue( y // self._multiplier )
                 
             
             self._one.Enable()
             
-            self._one.SetValue( value / self._multiplier )
+            self._one.SetValue( value // self._multiplier )
             
         
     
@@ -2490,7 +2214,7 @@ class RatingLike( wx.Window ):
         
         self._service_key = service_key
         
-        self._canvas_bmp = wx.Bitmap( 16, 16, 24 )
+        self._canvas_bmp = HG.client_controller.bitmap_manager.GetBitmap( 16, 16, 24 )
         
         self.Bind( wx.EVT_PAINT, self.EventPaint )
         self.Bind( wx.EVT_ERASE_BACKGROUND, self.EventEraseBackground )
@@ -2659,7 +2383,7 @@ class RatingLikeCanvas( RatingLike ):
         
         if self._current_media is not None:
             
-            for ( service_key, content_updates ) in service_keys_to_content_updates.items():
+            for ( service_key, content_updates ) in list(service_keys_to_content_updates.items()):
                 
                 for content_update in content_updates:
                     
@@ -2719,7 +2443,7 @@ class RatingNumerical( wx.Window ):
         
         my_width = ClientRatings.GetNumericalWidth( self._service_key )
         
-        self._canvas_bmp = wx.Bitmap( my_width, 16, 24 )
+        self._canvas_bmp = HG.client_controller.bitmap_manager.GetBitmap( my_width, 16, 24 )
         
         self.Bind( wx.EVT_PAINT, self.EventPaint )
         self.Bind( wx.EVT_ERASE_BACKGROUND, self.EventEraseBackground )
@@ -2758,7 +2482,7 @@ class RatingNumerical( wx.Window ):
             
             if 0 <= x and x <= my_active_width:
             
-                proportion_filled = float( x_adjusted ) / my_active_width
+                proportion_filled = x_adjusted / my_active_width
                 
                 if self._allow_zero:
                     
@@ -2766,7 +2490,7 @@ class RatingNumerical( wx.Window ):
                     
                 else:
                     
-                    rating = float( int( proportion_filled * self._num_stars ) ) / ( self._num_stars - 1 )
+                    rating = int( proportion_filled * self._num_stars ) / ( self._num_stars - 1 )
                     
                 
                 return rating
@@ -2945,7 +2669,7 @@ class RatingNumericalCanvas( RatingNumerical ):
         
         if self._current_media is not None:
             
-            for ( service_key, content_updates ) in service_keys_to_content_updates.items():
+            for ( service_key, content_updates ) in list(service_keys_to_content_updates.items()):
                 
                 for content_update in content_updates:
                     
@@ -3014,8 +2738,8 @@ class RegexButton( BetterButton ):
         ClientGUIMenus.AppendMenuItem( self, submenu, r'backslash character - \\', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', r'\\' )
         ClientGUIMenus.AppendMenuItem( self, submenu, r'beginning of line - ^', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', r'^' )
         ClientGUIMenus.AppendMenuItem( self, submenu, r'end of line - $', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', r'$' )
-        ClientGUIMenus.AppendMenuItem( self, submenu, u'any of these - [\u2026]', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', u'[\u2026]' )
-        ClientGUIMenus.AppendMenuItem( self, submenu, u'anything other than these - [^\u2026]', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', u'[^\u2026]' )
+        ClientGUIMenus.AppendMenuItem( self, submenu, 'any of these - [\u2026]', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '[\u2026]' )
+        ClientGUIMenus.AppendMenuItem( self, submenu, 'anything other than these - [^\u2026]', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '[^\u2026]' )
         
         ClientGUIMenus.AppendSeparator( submenu )
         
@@ -3031,15 +2755,15 @@ class RegexButton( BetterButton ):
         
         ClientGUIMenus.AppendSeparator( submenu )
         
-        ClientGUIMenus.AppendMenuItem( self, submenu, u'the next characters are: (non-consuming) - (?=\u2026)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', u'(?=\u2026)' )
-        ClientGUIMenus.AppendMenuItem( self, submenu, u'the next characters are not: (non-consuming) - (?!\u2026)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', u'(?!\u2026)' )
-        ClientGUIMenus.AppendMenuItem( self, submenu, u'the previous characters are: (non-consuming) - (?<=\u2026)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', u'(?<=\u2026)' )
-        ClientGUIMenus.AppendMenuItem( self, submenu, u'the previous characters are not: (non-consuming) - (?<!\u2026)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', u'(?<!\u2026)' )
+        ClientGUIMenus.AppendMenuItem( self, submenu, 'the next characters are: (non-consuming) - (?=\u2026)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '(?=\u2026)' )
+        ClientGUIMenus.AppendMenuItem( self, submenu, 'the next characters are not: (non-consuming) - (?!\u2026)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '(?!\u2026)' )
+        ClientGUIMenus.AppendMenuItem( self, submenu, 'the previous characters are: (non-consuming) - (?<=\u2026)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '(?<=\u2026)' )
+        ClientGUIMenus.AppendMenuItem( self, submenu, 'the previous characters are not: (non-consuming) - (?<!\u2026)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '(?<!\u2026)' )
         
         ClientGUIMenus.AppendSeparator( submenu )
         
         ClientGUIMenus.AppendMenuItem( self, submenu, r'0074 -> 74 - [1-9]+\d*', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', r'[1-9]+\d*' )
-        ClientGUIMenus.AppendMenuItem( self, submenu, r'filename - (?<=' + os.path.sep.encode( 'string_escape' ) + r')[^' + os.path.sep.encode( 'string_escape' ) + r']*?(?=\..*$)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '(?<=' + os.path.sep.encode( 'string_escape' ) + r')[^' + os.path.sep.encode( 'string_escape' ) + r']*?(?=\..*$)' )
+        ClientGUIMenus.AppendMenuItem( self, submenu, r'filename - (?<=' + re.escape( os.path.sep ) + r')[^' + re.escape( os.path.sep ) + r']*?(?=\..*$)', 'copy this phrase to the clipboard', HG.client_controller.pub, 'clipboard', 'text', '(?<=' + re.escape( os.path.sep ) + r')[^' + re.escape( os.path.sep ) + r']*?(?=\..*$)' )
         
         ClientGUIMenus.AppendMenu( menu, submenu, 'regex components' )
         
@@ -3065,7 +2789,7 @@ class RegexButton( BetterButton ):
         
         with ClientGUITopLevelWindows.DialogEdit( self, 'manage regex favourites' ) as dlg:
             
-            import ClientGUIScrolledPanelsEdit
+            from . import ClientGUIScrolledPanelsEdit
             
             panel = ClientGUIScrolledPanelsEdit.EditRegexFavourites( dlg, regex_favourites )
             
@@ -3177,7 +2901,10 @@ class StaticBoxSorterForListBoxTags( StaticBox ):
         self.Add( self._sorter, CC.FLAGS_EXPAND_PERPENDICULAR )
         
     
-    def ChangeTagService( self, service_key ): self._tags_box.ChangeTagService( service_key )
+    def ChangeTagService( self, service_key ):
+        
+        self._tags_box.ChangeTagService( service_key )
+        
     
     def EventSort( self, event ):
         
@@ -3237,7 +2964,7 @@ class RadioBox( StaticBox ):
     
     def GetSelectedClientData( self ):
         
-        for radio_button in self._radio_buttons_to_data.keys():
+        for radio_button in list(self._radio_buttons_to_data.keys()):
             
             if radio_button.GetValue() == True: return self._radio_buttons_to_data[ radio_button ]
             
@@ -3277,10 +3004,7 @@ class TextAndGauge( wx.Panel ):
             return
             
         
-        if text != self._st.GetLabelText():
-            
-            self._st.SetLabelText( text )
-            
+        self._st.SetLabelText( text )
         
         self._gauge.SetRange( range )
         self._gauge.SetValue( value )

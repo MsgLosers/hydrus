@@ -1,14 +1,14 @@
-import ClientConstants as CC
-import ClientData
-import ClientTags
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientTags
 import collections
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusSerialisable
-import HydrusTags
-import HydrusText
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusSerialisable
+from . import HydrusTags
+from . import HydrusText
 import os
 import re
 
@@ -162,7 +162,7 @@ class CheckerOptions( HydrusSerialisable.SerialisableBase ):
                 
             else:
                 
-                approx_time_per_file = current_time_delta / current_files_found
+                approx_time_per_file = current_time_delta // current_files_found
                 
                 ideal_check_period = self._intended_files_per_check * approx_time_per_file
                 
@@ -256,8 +256,8 @@ class CheckerOptions( HydrusSerialisable.SerialisableBase ):
             
             ( death_files_found, deleted_time_delta ) = self._death_file_velocity
             
-            current_file_velocity_float = current_files_found / float( current_time_delta )
-            death_file_velocity_float = death_files_found / float( deleted_time_delta )
+            current_file_velocity_float = current_files_found / current_time_delta
+            death_file_velocity_float = death_files_found / deleted_time_delta
             
             return current_file_velocity_float < death_file_velocity_float
             
@@ -299,7 +299,7 @@ class FilenameTaggingOptions( HydrusSerialisable.SerialisableBase ):
     
     def _GetSerialisableInfo( self ):
         
-        serialisable_directories_dict = self._directories_dict.items()
+        serialisable_directories_dict = list(self._directories_dict.items())
         
         return ( list( self._tags_for_all ), self._load_from_neighbouring_txt_files, self._add_filename, serialisable_directories_dict, self._quick_namespaces, self._regexes )
         
@@ -332,7 +332,7 @@ class FilenameTaggingOptions( HydrusSerialisable.SerialisableBase ):
                 directories_dict[ index ] = ( False, '' )
                 
             
-            serialisable_directories_dict = directories_dict.items()
+            serialisable_directories_dict = list(directories_dict.items())
             
             new_serialisable_info = ( tags_for_all_list, load_from_neighbouring_txt_files, add_filename, serialisable_directories_dict, quick_namespaces, regexes )
             
@@ -363,14 +363,12 @@ class FilenameTaggingOptions( HydrusSerialisable.SerialisableBase ):
             
             if os.path.exists( txt_path ):
                 
-                with open( txt_path, 'rb' ) as f:
+                with open( txt_path, 'r', encoding = 'utf-8'  ) as f:
                     
                     txt_tags_string = f.read()
                     
                 
                 try:
-                    
-                    txt_tags_string = HydrusData.ToUnicode( txt_tags_string )
                     
                     txt_tags = [ tag for tag in HydrusText.DeserialiseNewlinedTexts( txt_tags_string ) ]
                     
@@ -421,7 +419,7 @@ class FilenameTaggingOptions( HydrusSerialisable.SerialisableBase ):
         
         directories = directories.split( os.path.sep )
         
-        for ( index, ( dir_boolean, dir_namespace ) ) in self._directories_dict.items():
+        for ( index, ( dir_boolean, dir_namespace ) ) in list(self._directories_dict.items()):
             
             # we are talking -3 through 2 here
             
@@ -511,13 +509,12 @@ class FilenameTaggingOptions( HydrusSerialisable.SerialisableBase ):
         
         tags = HydrusTags.CleanTags( tags )
         
-        siblings_manager = HG.client_controller.GetManager( 'tag_siblings' )
-        parents_manager = HG.client_controller.GetManager( 'tag_parents' )
-        tag_censorship_manager = HG.client_controller.GetManager( 'tag_censorship' )
+        siblings_manager = HG.client_controller.tag_siblings_manager
+        parents_manager = HG.client_controller.tag_parents_manager
         
         tags = siblings_manager.CollapseTags( service_key, tags )
         tags = parents_manager.ExpandTags( service_key, tags )
-        tags = tag_censorship_manager.FilterTags( service_key, tags )
+        tags = HG.client_controller.tag_censorship_manager.FilterTags( service_key, tags )
         
         return tags
         
@@ -651,17 +648,17 @@ class FileImportOptions( HydrusSerialisable.SerialisableBase ):
         
         if self._min_size is not None and size < self._min_size:
             
-            raise HydrusExceptions.SizeException( 'File was ' + HydrusData.ConvertIntToBytes( size ) + ' but the lower limit is ' + HydrusData.ConvertIntToBytes( self._min_size ) + '.' )
+            raise HydrusExceptions.SizeException( 'File was ' + HydrusData.ToHumanBytes( size ) + ' but the lower limit is ' + HydrusData.ToHumanBytes( self._min_size ) + '.' )
             
         
         if self._max_size is not None and size > self._max_size:
             
-            raise HydrusExceptions.SizeException( 'File was ' + HydrusData.ConvertIntToBytes( size ) + ' but the upper limit is ' + HydrusData.ConvertIntToBytes( self._max_size ) + '.' )
+            raise HydrusExceptions.SizeException( 'File was ' + HydrusData.ToHumanBytes( size ) + ' but the upper limit is ' + HydrusData.ToHumanBytes( self._max_size ) + '.' )
             
         
         if mime == HC.IMAGE_GIF and self._max_gif_size is not None and size > self._max_gif_size:
             
-            raise HydrusExceptions.SizeException( 'File was ' + HydrusData.ConvertIntToBytes( size ) + ' but the upper limit for gifs is ' + HydrusData.ConvertIntToBytes( self._max_gif_size ) + '.' )
+            raise HydrusExceptions.SizeException( 'File was ' + HydrusData.ToHumanBytes( size ) + ' but the upper limit for gifs is ' + HydrusData.ToHumanBytes( self._max_gif_size ) + '.' )
             
         
         if self._min_resolution is not None:
@@ -691,11 +688,9 @@ class FileImportOptions( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def CheckNetworkDownload( self, possible_mime, size, certain ):
+    def CheckNetworkDownload( self, possible_mime, num_bytes, is_complete_file_size ):
         
-        if certain:
-            
-            # by certain, we really mean 'content-length said', hence the 'apparently'
+        if is_complete_file_size:
             
             error_prefix = 'Download was apparently '
             
@@ -706,22 +701,22 @@ class FileImportOptions( HydrusSerialisable.SerialisableBase ):
         
         if possible_mime is not None:
             
-            if possible_mime == HC.IMAGE_GIF and self._max_gif_size is not None and size > self._max_gif_size:
+            if possible_mime == HC.IMAGE_GIF and self._max_gif_size is not None and num_bytes > self._max_gif_size:
                 
-                raise HydrusExceptions.SizeException( error_prefix + HydrusData.ConvertIntToBytes( size ) + ' but the upper limit for gifs is ' + HydrusData.ConvertIntToBytes( self._max_gif_size ) + '.' )
+                raise HydrusExceptions.SizeException( error_prefix + HydrusData.ToHumanBytes( num_bytes ) + ' but the upper limit for gifs is ' + HydrusData.ToHumanBytes( self._max_gif_size ) + '.' )
                 
             
         
-        if self._max_size is not None and size > self._max_size:
+        if self._max_size is not None and num_bytes > self._max_size:
             
-            raise HydrusExceptions.SizeException( error_prefix + HydrusData.ConvertIntToBytes( size ) + ' but the upper limit is ' + HydrusData.ConvertIntToBytes( self._max_size ) + '.' )
+            raise HydrusExceptions.SizeException( error_prefix + HydrusData.ToHumanBytes( num_bytes ) + ' but the upper limit is ' + HydrusData.ToHumanBytes( self._max_size ) + '.' )
             
         
-        if certain:
+        if is_complete_file_size:
             
-            if self._min_size is not None and size < self._min_size:
+            if self._min_size is not None and num_bytes < self._min_size:
                 
-                raise HydrusExceptions.SizeException( error_prefix + HydrusData.ConvertIntToBytes( size ) + ' but the lower limit is ' + HydrusData.ConvertIntToBytes( self._min_size ) + '.' )
+                raise HydrusExceptions.SizeException( error_prefix + HydrusData.ToHumanBytes( num_bytes ) + ' but the lower limit is ' + HydrusData.ToHumanBytes( self._min_size ) + '.' )
                 
             
         
@@ -768,17 +763,17 @@ class FileImportOptions( HydrusSerialisable.SerialisableBase ):
         
         if self._min_size is not None:
             
-            statements.append( 'excluding < ' + HydrusData.ConvertIntToBytes( self._min_size ) )
+            statements.append( 'excluding < ' + HydrusData.ToHumanBytes( self._min_size ) )
             
         
         if self._max_size is not None:
             
-            statements.append( 'excluding > ' + HydrusData.ConvertIntToBytes( self._max_size ) )
+            statements.append( 'excluding > ' + HydrusData.ToHumanBytes( self._max_size ) )
             
         
         if self._max_gif_size is not None:
             
-            statements.append( 'excluding gifs > ' + HydrusData.ConvertIntToBytes( self._max_gif_size ) )
+            statements.append( 'excluding gifs > ' + HydrusData.ToHumanBytes( self._max_gif_size ) )
             
         
         if self._min_resolution is not None:
@@ -942,7 +937,7 @@ class TagImportOptions( HydrusSerialisable.SerialisableBase ):
         
         serialisable_tag_blacklist = self._tag_blacklist.GetSerialisableTuple()
         
-        serialisable_service_keys_to_service_tag_import_options = [ ( service_key.encode( 'hex' ), service_tag_import_options.GetSerialisableTuple() ) for ( service_key, service_tag_import_options ) in self._service_keys_to_service_tag_import_options.items() if test_func( service_key ) ]
+        serialisable_service_keys_to_service_tag_import_options = [ ( service_key.hex(), service_tag_import_options.GetSerialisableTuple() ) for ( service_key, service_tag_import_options ) in list(self._service_keys_to_service_tag_import_options.items()) if test_func( service_key ) ]
         
         return ( self._fetch_tags_even_if_url_recognised_and_file_already_in_db, self._fetch_tags_even_if_hash_recognised_and_file_already_in_db, serialisable_tag_blacklist, serialisable_service_keys_to_service_tag_import_options, self._is_default )
         
@@ -953,7 +948,7 @@ class TagImportOptions( HydrusSerialisable.SerialisableBase ):
         
         self._tag_blacklist = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_blacklist )
         
-        self._service_keys_to_service_tag_import_options = { encoded_service_key.decode( 'hex' ) : HydrusSerialisable.CreateFromSerialisableTuple( serialisable_service_tag_import_options ) for ( encoded_service_key, serialisable_service_tag_import_options ) in serialisable_service_keys_to_service_tag_import_options }
+        self._service_keys_to_service_tag_import_options = { bytes.fromhex( encoded_service_key ) : HydrusSerialisable.CreateFromSerialisableTuple( serialisable_service_tag_import_options ) for ( encoded_service_key, serialisable_service_tag_import_options ) in serialisable_service_keys_to_service_tag_import_options }
         
     
     def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
@@ -1010,17 +1005,17 @@ class TagImportOptions( HydrusSerialisable.SerialisableBase ):
             
             fetch_tags_even_if_hash_recognised_and_file_already_in_db = fetch_tags_even_if_url_recognised_and_file_already_in_db
             
-            get_all_service_keys = { encoded_service_key.decode( 'hex' ) for encoded_service_key in serialisable_get_all_service_keys }
-            service_keys_to_namespaces = { service_key.decode( 'hex' ) : set( namespaces ) for ( service_key, namespaces ) in safe_service_keys_to_namespaces.items() }
-            service_keys_to_additional_tags = { service_key.decode( 'hex' ) : set( tags ) for ( service_key, tags ) in safe_service_keys_to_additional_tags.items() }
+            get_all_service_keys = { bytes.fromhex( encoded_service_key ) for encoded_service_key in serialisable_get_all_service_keys }
+            service_keys_to_namespaces = { bytes.fromhex( service_key ) : set( namespaces ) for ( service_key, namespaces ) in list(safe_service_keys_to_namespaces.items()) }
+            service_keys_to_additional_tags = { bytes.fromhex( service_key ) : set( tags ) for ( service_key, tags ) in list(safe_service_keys_to_additional_tags.items()) }
             
             service_keys_to_service_tag_import_options = {}
             
             service_keys = set()
             
             service_keys.update( get_all_service_keys )
-            service_keys.update( service_keys_to_namespaces.keys() )
-            service_keys.update( service_keys_to_additional_tags.keys() )
+            service_keys.update( list(service_keys_to_namespaces.keys()) )
+            service_keys.update( list(service_keys_to_additional_tags.keys()) )
             
             for service_key in service_keys:
                 
@@ -1050,7 +1045,7 @@ class TagImportOptions( HydrusSerialisable.SerialisableBase ):
                 service_keys_to_service_tag_import_options[ service_key ] = service_tag_import_options
                 
             
-            serialisable_service_keys_to_service_tag_import_options = [ ( service_key.encode( 'hex' ), service_tag_import_options.GetSerialisableTuple() ) for ( service_key, service_tag_import_options ) in service_keys_to_service_tag_import_options.items() ]
+            serialisable_service_keys_to_service_tag_import_options = [ ( service_key.hex(), service_tag_import_options.GetSerialisableTuple() ) for ( service_key, service_tag_import_options ) in list(service_keys_to_service_tag_import_options.items()) ]
             
             new_serialisable_info = ( fetch_tags_even_if_url_recognised_and_file_already_in_db, fetch_tags_even_if_hash_recognised_and_file_already_in_db, serialisable_tag_blacklist, serialisable_service_keys_to_service_tag_import_options )
             
@@ -1071,28 +1066,33 @@ class TagImportOptions( HydrusSerialisable.SerialisableBase ):
     
     def CheckBlacklist( self, tags ):
         
-        ok_tags = self._tag_blacklist.Filter( tags )
+        sibling_tags = HG.client_controller.tag_siblings_manager.CollapseTags( CC.COMBINED_TAG_SERVICE_KEY, tags )
         
-        if len( ok_tags ) < len( tags ):
+        for test_tags in ( tags, sibling_tags ):
             
-            bad_tags = set( tags ).difference( ok_tags )
+            ok_tags = self._tag_blacklist.Filter( test_tags )
             
-            bad_tags = HydrusTags.SortNumericTags( bad_tags )
-            
-            raise HydrusExceptions.VetoException( ', '.join( bad_tags ) + ' is blacklisted!' )
+            if len( ok_tags ) < len( test_tags ):
+                
+                bad_tags = set( test_tags ).difference( ok_tags )
+                
+                bad_tags = HydrusTags.SortNumericTags( bad_tags )
+                
+                raise HydrusExceptions.VetoException( ', '.join( bad_tags ) + ' is blacklisted!' )
+                
             
         
     
     def GetServiceKeysToContentUpdates( self, status, in_inbox, hash, parsed_tags ):
         
-        siblings_manager = HG.client_controller.GetManager( 'tag_siblings' )
-        parents_manager = HG.client_controller.GetManager( 'tag_parents' )
+        siblings_manager = HG.client_controller.tag_siblings_manager
+        parents_manager = HG.client_controller.tag_parents_manager
         
         parsed_tags = HydrusTags.CleanTags( parsed_tags )
         
-        service_keys_to_tags = collections.defaultdict( set )
+        service_keys_to_tags = ClientTags.ServiceKeysToTags()
         
-        for ( service_key, service_tag_import_options ) in self._service_keys_to_service_tag_import_options.items():
+        for ( service_key, service_tag_import_options ) in list(self._service_keys_to_service_tag_import_options.items()):
             
             service_parsed_tags = siblings_manager.CollapseTags( service_key, parsed_tags )
             service_parsed_tags = parents_manager.ExpandTags( service_key, service_parsed_tags )
@@ -1132,7 +1132,7 @@ class TagImportOptions( HydrusSerialisable.SerialisableBase ):
         
         statements = []
         
-        for ( service_key, service_tag_import_options ) in self._service_keys_to_service_tag_import_options.items():
+        for ( service_key, service_tag_import_options ) in list(self._service_keys_to_service_tag_import_options.items()):
             
             sub_statements = service_tag_import_options.GetSummaryStatements()
             
@@ -1205,7 +1205,7 @@ class TagImportOptions( HydrusSerialisable.SerialisableBase ):
     
     def HasAdditionalTags( self ):
         
-        return True in ( service_tag_import_options.HasAdditionalTags() for service_tag_import_options in self._service_keys_to_service_tag_import_options.values() )
+        return True in ( service_tag_import_options.HasAdditionalTags() for service_tag_import_options in list(self._service_keys_to_service_tag_import_options.values()) )
         
     
     def IsDefault( self ):
@@ -1230,7 +1230,7 @@ class TagImportOptions( HydrusSerialisable.SerialisableBase ):
     
     def WorthFetchingTags( self ):
         
-        return True in ( service_tag_import_options.WorthFetchingTags() for service_tag_import_options in self._service_keys_to_service_tag_import_options.values() )
+        return True in ( service_tag_import_options.WorthFetchingTags() for service_tag_import_options in list(self._service_keys_to_service_tag_import_options.values()) )
         
     
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_TAG_IMPORT_OPTIONS ] = TagImportOptions

@@ -1,21 +1,22 @@
-import ClientCaches
-import ClientConstants as CC
-import ClientData
-import ClientGUICommon
-import ClientGUIDialogs
-import ClientGUIListCtrl
-import ClientGUIMenus
-import ClientGUIScrolledPanels
-import ClientGUIShortcuts
-import ClientGUITime
-import ClientGUITopLevelWindows
-import ClientParsing
-import HydrusConstants as HC
-import HydrusData
-import HydrusExceptions
-import HydrusGlobals as HG
-import HydrusNetworking
-import HydrusText
+from . import ClientCaches
+from . import ClientConstants as CC
+from . import ClientData
+from . import ClientGUICommon
+from . import ClientGUIDialogs
+from . import ClientGUIFunctions
+from . import ClientGUIListCtrl
+from . import ClientGUIMenus
+from . import ClientGUIScrolledPanels
+from . import ClientGUIShortcuts
+from . import ClientGUITime
+from . import ClientGUITopLevelWindows
+from . import ClientParsing
+from . import HydrusConstants as HC
+from . import HydrusData
+from . import HydrusExceptions
+from . import HydrusGlobals as HG
+from . import HydrusNetworking
+from . import HydrusText
 import os
 import wx
 
@@ -77,14 +78,16 @@ class BandwidthRulesCtrl( ClientGUICommon.StaticBox ):
         
         if bandwidth_type == HC.BANDWIDTH_TYPE_DATA:
             
-            pretty_max_allowed = HydrusData.ConvertIntToBytes( max_allowed )
+            pretty_max_allowed = HydrusData.ToHumanBytes( max_allowed )
             
         elif bandwidth_type == HC.BANDWIDTH_TYPE_REQUESTS:
             
             pretty_max_allowed = HydrusData.ToHumanInt( max_allowed ) + ' requests'
             
         
-        sort_tuple = ( max_allowed, time_delta )
+        sort_time_delta = ClientGUIListCtrl.SafeNoneInt( time_delta )
+        
+        sort_tuple = ( max_allowed, sort_time_delta )
         display_tuple = ( pretty_max_allowed, pretty_time_delta )
         
         return ( display_tuple, sort_tuple )
@@ -234,7 +237,7 @@ class BytesControl( wx.Panel ):
         
         self._spin = wx.SpinCtrl( self, min = 0, max = 1048576 )
         
-        width = ClientGUICommon.ConvertTextToPixelWidth( self._spin, 12 )
+        width = ClientGUIFunctions.ConvertTextToPixelWidth( self._spin, 12 )
         
         self._spin.SetSize( ( width, -1 ) )
         
@@ -301,7 +304,7 @@ class BytesControl( wx.Panel ):
         
         while value % 1024 == 0 and unit < max_unit:
             
-            value /= 1024
+            value //= 1024
             
             unit *= 1024
             
@@ -363,7 +366,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
         vbox = wx.BoxSizer( wx.VERTICAL )
         
         vbox.Add( transformations_panel, CC.FLAGS_EXPAND_BOTH_WAYS )
-        vbox.Add( gridbox, CC.FLAGS_EXPAND_PERPENDICULAR )
+        vbox.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         
         self.SetSizer( vbox )
         
@@ -439,7 +442,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
         ( number, transformation_type, data ) = transformation
         
         pretty_number = HydrusData.ToHumanInt( number )
-        pretty_transformation = ClientParsing.StringConverter.TransformationToUnicode( ( transformation_type, data ) )
+        pretty_transformation = ClientParsing.StringConverter.TransformationToString( ( transformation_type, data ) )
         
         string_converter = self._GetValue()
         
@@ -899,7 +902,7 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
         
         vbox = wx.BoxSizer( wx.VERTICAL )
         
-        vbox.Add( gridbox, CC.FLAGS_EXPAND_PERPENDICULAR )
+        vbox.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         vbox.Add( self._example_string_matches, CC.FLAGS_EXPAND_PERPENDICULAR )
         
         self.SetSizer( vbox )
@@ -969,7 +972,7 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
             self._min_chars.Disable()
             self._max_chars.Disable()
             
-            self._example_string.SetValue( self._match_value_text_input.GetValue() )
+            self._example_string.ChangeValue( self._match_value_text_input.GetValue() )
             
             self._example_string_matches.SetLabelText( '' )
             
@@ -989,7 +992,7 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
                 
             except HydrusExceptions.StringMatchException as e:
                 
-                reason = HydrusData.ToUnicode( e )
+                reason = str( e )
                 
                 self._example_string_matches.SetLabelText( 'Example does not match - ' + reason )
                 self._example_string_matches.SetForegroundColour( ( 128, 0, 0 ) )
@@ -1263,19 +1266,19 @@ class NetworkJobControl( wx.Panel ):
                         
                     else:
                         
-                        speed_text += HydrusData.ConvertIntToBytes( bytes_read )
+                        speed_text += HydrusData.ToHumanBytes( bytes_read )
                         
                     
                 
                 if current_speed != bytes_to_read: # if it is a real quick download, just say its size
                     
-                    speed_text += ' ' + HydrusData.ConvertIntToBytes( current_speed ) + '/s'
+                    speed_text += ' ' + HydrusData.ToHumanBytes( current_speed ) + '/s'
                     
                 
             
             self._right_text.SetLabelText( speed_text )
             
-            right_width = ClientGUICommon.ConvertTextToPixelWidth( self._right_text, len( speed_text ) )
+            right_width = ClientGUIFunctions.ConvertTextToPixelWidth( self._right_text, len( speed_text ) )
             
             right_min_size = ( right_width, -1 )
             
@@ -1458,7 +1461,7 @@ class StringMatchButton( ClientGUICommon.BetterButton ):
     
     def _UpdateLabel( self ):
         
-        label = self._string_match.ToUnicode()
+        label = self._string_match.ToString()
         
         self.SetLabelText( label )
         
@@ -1497,7 +1500,7 @@ class StringMatchToStringMatchDictControl( wx.Panel ):
         
         #
         
-        self._listctrl.AddDatas( initial_dict.items() )
+        self._listctrl.AddDatas( list(initial_dict.items()) )
         
         self._listctrl.Sort()
         
@@ -1514,8 +1517,8 @@ class StringMatchToStringMatchDictControl( wx.Panel ):
         
         ( key_string_match, value_string_match ) = data
         
-        pretty_key = key_string_match.ToUnicode()
-        pretty_value = value_string_match.ToUnicode()
+        pretty_key = key_string_match.ToString()
+        pretty_value = value_string_match.ToString()
         
         display_tuple = ( pretty_key, pretty_value )
         sort_tuple = ( pretty_key, pretty_value )
@@ -1657,28 +1660,40 @@ class StringToStringDictButton( ClientGUICommon.BetterButton ):
     
 class StringToStringDictControl( wx.Panel ):
     
-    def __init__( self, parent, initial_dict, min_height = 10, key_name = 'key', value_name = 'value' ):
+    def __init__( self, parent, initial_dict, min_height = 10, key_name = 'key', value_name = 'value', allow_add_delete = True, edit_keys = True ):
         
         wx.Panel.__init__( self, parent )
         
         self._key_name = key_name
         self._value_name = value_name
         
+        self._edit_keys = edit_keys
+        
         listctrl_panel = ClientGUIListCtrl.BetterListCtrlPanel( self )
         
         columns = [ ( self._key_name, 20 ), ( self._value_name, -1 ) ]
         
-        self._listctrl = ClientGUIListCtrl.BetterListCtrl( listctrl_panel, 'key_to_value', min_height, 36, columns, self._ConvertDataToListCtrlTuples, use_simple_delete = True, activation_callback = self._Edit )
+        use_simple_delete = allow_add_delete
+        
+        self._listctrl = ClientGUIListCtrl.BetterListCtrl( listctrl_panel, 'key_to_value', min_height, 36, columns, self._ConvertDataToListCtrlTuples, use_simple_delete = use_simple_delete, activation_callback = self._Edit )
         
         listctrl_panel.SetListCtrl( self._listctrl )
         
-        listctrl_panel.AddButton( 'add', self._Add )
+        if allow_add_delete:
+            
+            listctrl_panel.AddButton( 'add', self._Add )
+            
+        
         listctrl_panel.AddButton( 'edit', self._Edit, enabled_only_on_selection = True )
-        listctrl_panel.AddDeleteButton()
+        
+        if allow_add_delete:
+            
+            listctrl_panel.AddDeleteButton()
+            
         
         #
         
-        self._listctrl.AddDatas( initial_dict.items() )
+        self._listctrl.AddDatas( list(initial_dict.items()) )
         
         self._listctrl.Sort()
         
@@ -1737,23 +1752,30 @@ class StringToStringDictControl( wx.Panel ):
             
             ( key, value ) = data
             
-            with ClientGUIDialogs.DialogTextEntry( self, 'edit the ' + self._key_name, default = key, allow_blank = False ) as dlg:
+            if self._edit_keys:
                 
-                if dlg.ShowModal() == wx.ID_OK:
+                with ClientGUIDialogs.DialogTextEntry( self, 'edit the ' + self._key_name, default = key, allow_blank = False ) as dlg:
                     
-                    edited_key = dlg.GetValue()
-                    
-                    if edited_key != key and edited_key in self._GetExistingKeys():
+                    if dlg.ShowModal() == wx.ID_OK:
                         
-                        wx.MessageBox( 'That ' + self._key_name + ' already exists!' )
+                        edited_key = dlg.GetValue()
+                        
+                        if edited_key != key and edited_key in self._GetExistingKeys():
+                            
+                            wx.MessageBox( 'That ' + self._key_name + ' already exists!' )
+                            
+                            break
+                            
+                        
+                    else:
                         
                         break
                         
                     
-                else:
-                    
-                    break
-                    
+                
+            else:
+                
+                edited_key = key
                 
             
             with ClientGUIDialogs.DialogTextEntry( self, 'edit the ' + self._value_name, default = value, allow_blank = True ) as dlg:
@@ -1812,7 +1834,7 @@ class StringToStringMatchDictControl( wx.Panel ):
         
         #
         
-        self._listctrl.AddDatas( initial_dict.items() )
+        self._listctrl.AddDatas( list(initial_dict.items()) )
         
         self._listctrl.Sort()
         
@@ -1829,7 +1851,7 @@ class StringToStringMatchDictControl( wx.Panel ):
         
         ( key, string_match ) = data
         
-        pretty_string_match = string_match.ToUnicode()
+        pretty_string_match = string_match.ToString()
         
         display_tuple = ( key, pretty_string_match )
         sort_tuple = ( key, pretty_string_match )
@@ -1965,7 +1987,16 @@ class TextAndPasteCtrl( wx.Panel ):
     
     def _Paste( self ):
         
-        raw_text = HG.client_controller.GetClipboardText()
+        try:
+            
+            raw_text = HG.client_controller.GetClipboardText()
+            
+        except HydrusExceptions.DataMissing as e:
+            
+            wx.MessageBox( str( e ) )
+            
+            return
+            
         
         try:
             
@@ -1995,7 +2026,9 @@ class TextAndPasteCtrl( wx.Panel ):
             
             text = self._text_input.GetValue()
             
-            if not self._allow_empty_input and text == '':
+            text = HydrusText.StripIOInputLine( text )
+            
+            if text == '' and not self._allow_empty_input:
                 
                 return
                 

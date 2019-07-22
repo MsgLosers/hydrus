@@ -1,18 +1,17 @@
-import ClientDaemons
-import ClientImporting
-import ClientImportLocal
-import ClientPaths
+from . import ClientDaemons
+from . import ClientImporting
+from . import ClientImportLocal
+from . import ClientPaths
 import collections
-import HydrusConstants as HC
+from . import HydrusConstants as HC
 import os
 import shutil
 import stat
-import TestConstants
 import unittest
-import HydrusData
-import ClientConstants as CC
-import HydrusGlobals as HG
-import HydrusPaths
+from . import HydrusData
+from . import ClientConstants as CC
+from . import HydrusGlobals as HG
+from . import HydrusPaths
 
 with open( os.path.join( HC.STATIC_DIR, 'hydrus.png' ), 'rb' ) as f:
     
@@ -22,7 +21,7 @@ class TestDaemons( unittest.TestCase ):
     
     def test_import_folders_daemon( self ):
         
-        test_dir = ClientPaths.GetTempDir()
+        test_dir = HydrusPaths.GetTempDir()
         
         try:
             
@@ -36,8 +35,8 @@ class TestDaemons( unittest.TestCase ):
             HydrusPaths.MirrorFile( hydrus_png_path, os.path.join( test_dir, '1' ) ) # previously imported
             HydrusPaths.MirrorFile( hydrus_png_path, os.path.join( test_dir, '2' ) )
             
-            with open( os.path.join( test_dir, '3' ), 'wb' ) as f: f.write( 'blarg' ) # broken
-            with open( os.path.join( test_dir, '4' ), 'wb' ) as f: f.write( 'blarg' ) # previously failed
+            with open( os.path.join( test_dir, '3' ), 'wb' ) as f: f.write( b'blarg' ) # broken
+            with open( os.path.join( test_dir, '4' ), 'wb' ) as f: f.write( b'blarg' ) # previously failed
             
             #
             
@@ -53,7 +52,10 @@ class TestDaemons( unittest.TestCase ):
             HG.test_controller.SetRead( 'serialisable_names', [ 'imp' ] )
             HG.test_controller.SetRead( 'serialisable_named', import_folder )
             
-            ClientDaemons.DAEMONCheckImportFolders( HG.test_controller )
+            HG.test_controller.ClearWrites( 'import_file' )
+            HG.test_controller.ClearWrites( 'serialisable' )
+            
+            ClientDaemons.DAEMONCheckImportFolders()
             
             import_file = HG.test_controller.GetWrite( 'import_file' )
             

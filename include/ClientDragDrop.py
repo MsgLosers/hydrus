@@ -1,11 +1,11 @@
-import ClientGUICommon
-import HydrusGlobals as HG
-import HydrusPaths
+from . import ClientGUIFunctions
+from . import HydrusGlobals as HG
+from . import HydrusPaths
 import json
 import os
 import wx
 
-def DoFileExportDragDrop( window, page_key, media, cmd_down ):
+def DoFileExportDragDrop( window, page_key, media, alt_down ):
     
     drop_source = wx.DropSource( window )
     
@@ -23,14 +23,16 @@ def DoFileExportDragDrop( window, page_key, media, cmd_down ):
         
     else:
         
-        encoded_page_key = page_key.encode( 'hex' )
+        encoded_page_key = page_key.hex()
         
     
-    data = ( encoded_page_key, [ hash.encode( 'hex' ) for hash in hashes ] )
+    data_obj = ( encoded_page_key, [ hash.hex() for hash in hashes ] )
     
-    data = json.dumps( data )
+    data_str = json.dumps( data_obj )
     
-    hydrus_media_data_object.SetData( data )
+    data_bytes = bytes( data_str, 'utf-8' )
+    
+    hydrus_media_data_object.SetData( data_bytes )
     
     data_object.Add( hydrus_media_data_object, True )
     
@@ -42,10 +44,14 @@ def DoFileExportDragDrop( window, page_key, media, cmd_down ):
     
     original_paths = []
     
+    total_size = 0
+    
     for m in media:
         
         hash = m.GetHash()
         mime = m.GetMime()
+        
+        total_size += m.GetSize()
         
         original_path = client_files_manager.GetFilePath( hash, mime, check_file_exists = False )
         
@@ -54,21 +60,21 @@ def DoFileExportDragDrop( window, page_key, media, cmd_down ):
     
     #
     
-    do_temp_dnd = False
-    
     new_options = HG.client_controller.new_options
     
-    if new_options.GetBoolean( 'discord_dnd_fix' ):
-        
-        if len( original_paths ) <= 10 and sum( ( os.path.getsize( path ) for path in original_paths ) ) < 50 * 1048576:
-            
-            do_temp_dnd = True
-            
-        
+    secret_discord_dnd_fix_possible = new_options.GetBoolean( 'secret_discord_dnd_fix' ) and alt_down
+    
+    discord_dnd_fix_possible = new_options.GetBoolean( 'discord_dnd_fix' ) and len( original_paths ) <= 50 and total_size < 200 * 1048576
     
     temp_dir = HG.client_controller.temp_dir
     
-    if do_temp_dnd and os.path.exists( temp_dir ):
+    if secret_discord_dnd_fix_possible:
+        
+        dnd_paths = original_paths
+        
+        flags = wx.Drag_AllowMove
+        
+    elif discord_dnd_fix_possible and os.path.exists( temp_dir ):
         
         dnd_paths = []
         
@@ -91,16 +97,7 @@ def DoFileExportDragDrop( window, page_key, media, cmd_down ):
     else:
         
         dnd_paths = original_paths
-        
-        if cmd_down:
-            
-            # secret dangerous discord compat mode
-            flags = wx.Drag_AllowMove
-            
-        else:
-            
-            flags = wx.Drag_CopyOnly
-            
+        flags = wx.Drag_CopyOnly
         
     
     for path in dnd_paths:
@@ -185,14 +182,16 @@ class FileDropTarget( wx.DropTarget ):
                     
                     mview = self._hydrus_media_data_object.GetData()
                     
-                    data = mview.tobytes()
+                    data_bytes = mview.tobytes()
                     
-                    ( encoded_page_key, encoded_hashes ) = json.loads( data )
+                    data_str = str( data_bytes, 'utf-8' )
+                    
+                    ( encoded_page_key, encoded_hashes ) = json.loads( data_str )
                     
                     if encoded_page_key is not None:
                         
-                        page_key = encoded_page_key.decode( 'hex' )
-                        hashes = [ encoded_hash.decode( 'hex' ) for encoded_hash in encoded_hashes ]
+                        page_key = bytes.fromhex( encoded_page_key )
+                        hashes = [ bytes.fromhex( encoded_hash ) for encoded_hash in encoded_hashes ]
                         
                         wx.CallAfter( self._media_callable, page_key, hashes ) # callafter so we can terminate dnd event now
                         
@@ -218,10 +217,10 @@ class FileDropTarget( wx.DropTarget ):
     
     def OnDrop( self, x, y ):
         
-        screen_position = ClientGUICommon.ClientToScreen( self._parent, ( x, y ) )
+        screen_position = ClientGUIFunctions.ClientToScreen( self._parent, ( x, y ) )
         
-        drop_tlp = ClientGUICommon.GetXYTopTLP( screen_position )
-        my_tlp = ClientGUICommon.GetTLP( self._parent )
+        drop_tlp = ClientGUIFunctions.GetXYTopTLP( screen_position )
+        my_tlp = ClientGUIFunctions.GetTLP( self._parent )
         
         if drop_tlp == my_tlp:
             
